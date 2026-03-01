@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
 .omc/
+.claude/
+CLAUDE.md
 outputs/
