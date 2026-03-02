@@ -230,7 +230,7 @@ def evaluate_pseudo_labels(pseudo_actions: list[np.ndarray]) -> dict:
 
 
 # =============================================================================
-# 4. 세 모델 종합 비교
+# 4. 모델 종합 비교
 # =============================================================================
 
 def build_model_comparison(
@@ -389,7 +389,7 @@ def generate_report(
         f"- Temporal Consistency: {quality_metrics['temporal_consistency']}",
         f"- 품질 등급: **{quality_metrics['quality_grade']}**",
         "",
-        "## 2. 세 모델 종합 비교",
+        "## 2. 모델 종합 비교",
         "",
     ]
 

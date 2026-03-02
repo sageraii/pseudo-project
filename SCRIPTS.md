@@ -611,7 +611,7 @@ python scripts/week9_run_dreamdojo_rollout.py \
 python scripts/week11_benchmark_report.py \
     --eval-dir outputs/eval \
     --cosmos-dir outputs/cosmos_eval \
-    --dreamdojo-dir outputs/dreamdojo_rollouts \
+    --synergy-dir outputs/week10_analysis \
     --output outputs/final_report.md
 ```
 
