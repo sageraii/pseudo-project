@@ -1,5 +1,10 @@
 """
-Week 9: DreamDojo 롤아웃 생성 및 세계 모델 분석
+Week 9: DreamDojo 롤아웃 생성 및 세계 모델 분석 (참고용)
+
+NOTE: 본 프로젝트에서 DreamDojo는 Cosmos Predict2.5 Action-Conditioned 모델로 대체되었습니다.
+이 스크립트는 DreamDojo 세계 모델의 API 패턴, 품질 메트릭, 비디오 분석 로직을
+참고하기 위해 유지됩니다. 품질 메트릭(analyze_rollout_quality)은
+Cosmos Predict2.5 합성 비디오 평가에도 재사용 가능합니다.
 
 DreamDojo 사전 훈련 모델로 미래 비디오 롤아웃을 생성하고
 물리 시뮬레이션 품질을 분석합니다.
@@ -9,10 +14,14 @@ Usage:
         --model nvidia/DreamDojo-2B-480p-GR1 \
         --output-dir outputs/dreamdojo_rollouts
 
-Constraints:
+Constraints (DreamDojo):
     - 증류 파이프라인 미공개 → 실시간 10 FPS 불가
     - 텔레오퍼레이션 코드 미공개 → VR 연동 불가
     - 후훈련: 8x H100 80GB 필요 → 추론만 수행
+
+See also:
+    - Cosmos Predict2.5: 1x RTX 4090으로 OMX 후훈련 가능
+    - utils/omx_fk.py: OMX joint → EE pose 변환 (Cosmos 입력)
 """
 
 import argparse

@@ -1,18 +1,18 @@
 """
-Week 10: 세 모델 크로스 분석 + DreamDojo-IDM 시너지 파이프라인
+Week 10: 통합 파이프라인 + Cosmos Predict2.5-IDM 시너지
 
 핵심 시너지:
-  DreamDojo 합성 비디오 생성 → IDM pseudo action labeling → VLA 학습 데이터 증강
+  Cosmos Predict2.5 합성 비디오 생성 → IDM pseudo action labeling → VLA 학습 데이터 증강
 
 파이프라인:
-  1. DreamDojo로 합성 비디오 생성 (week9 결과 활용)
-  2. GR00T-IDM으로 비디오에서 action pseudo label 추출
+  1. Cosmos Predict2.5로 action-conditioned 합성 비디오 생성
+  2. GR00T IDM으로 비디오에서 action pseudo label 추출
   3. pseudo label 품질 평가 (vla_action_quality.py 참조)
-  4. 세 모델 종합 비교 테이블 생성
+  4. 모델 종합 비교 + 증강 전/후 성능 비교
 
 Usage:
     python scripts/week10_cross_model_analysis.py \
-        --dreamdojo-dir outputs/dreamdojo_rollouts \
+        --cosmos-predict-dir outputs/cosmos_predict \
         --groot-eval-dir outputs/eval \
         --cosmos-eval-dir outputs/cosmos_eval \
         --output-dir outputs/week10_analysis
@@ -20,7 +20,7 @@ Usage:
 참조:
     - GR00T-IDM-Documentation/src/vla_action_quality.py (품질 메트릭)
     - GR00T-IDM-Documentation/src/idm_inference_example.py (IDM 추론 패턴)
-    - scripts/week9_run_dreamdojo_rollout.py (DreamDojo 출력 포맷)
+    - utils/omx_fk.py (OMX joint → EE pose → Cosmos 입력 변환)
 """
 
 import argparse
@@ -38,27 +38,29 @@ from utils.omx_constants import (
     OMX_DOF,
     OMX_IDM_JOINT_NAMES,
     OMX_JOINT_MAPPING,
+    OMX_JOINT_MAPPING_INV,
     VIDEO_DTYPE_IDM,
     VIDEO_DTYPE_VLA,
     convert_video_idm_to_vla,
     convert_video_vla_to_idm,
 )
+from utils.omx_fk import OMXForwardKinematics
 
 
 # =============================================================================
-# 1. DreamDojo 비디오 → IDM 입력 포맷 변환
+# 1. Cosmos Predict2.5 합성 비디오 → IDM 입력 포맷 변환
 # =============================================================================
 
-def load_dreamdojo_rollout(rollout_dir: Path) -> list[np.ndarray]:
-    """DreamDojo 롤아웃 비디오 로드 (또는 더미 생성).
+def load_cosmos_rollout(rollout_dir: Path) -> list[np.ndarray]:
+    """Cosmos Predict2.5 합성 비디오 로드 (또는 더미 생성).
 
-    DreamDojo 출력: uint8 [0,255], shape (H, W, 3), 10 FPS
+    Cosmos Predict2.5 출력: uint8 [0,255], action-conditioned 비디오
     IDM 입력 요구: uint8 [0,255], shape (256, 256, 3), 2 프레임씩
 
     Returns:
         프레임 리스트 (각 프레임: uint8 ndarray)
     """
-    # 실제 DreamDojo 롤아웃 비디오 로드 시도
+    # 실제 Cosmos Predict2.5 합성 비디오 로드 시도
     try:
         import cv2
         video_files = sorted(rollout_dir.glob("rollout_*.mp4"))
@@ -74,7 +76,7 @@ def load_dreamdojo_rollout(rollout_dir: Path) -> list[np.ndarray]:
                 frames.append(frame.astype(np.uint8))
             cap.release()
             if frames:
-                print(f"  DreamDojo 롤아웃 로드: {len(frames)} frames from {video_files[0].name}")
+                print(f"  Cosmos Predict2.5 합성 비디오 로드: {len(frames)} frames from {video_files[0].name}")
                 return frames
     except ImportError:
         pass
@@ -93,10 +95,10 @@ def load_dreamdojo_rollout(rollout_dir: Path) -> list[np.ndarray]:
 
 
 def prepare_idm_input(frames: list[np.ndarray]) -> list[dict]:
-    """DreamDojo 프레임을 IDM 입력 포맷으로 변환.
+    """합성 비디오 프레임을 IDM 입력 포맷으로 변환.
 
     IDM은 연속 2 프레임 (t, t+1)을 입력으로 받아 action을 예측합니다.
-    DreamDojo 출력은 이미 uint8이므로 dtype 변환 불필요.
+    Cosmos Predict2.5 출력은 이미 uint8이므로 dtype 변환 불필요.
 
     Args:
         frames: uint8 프레임 리스트, 각 (256, 256, 3)
@@ -231,140 +233,136 @@ def evaluate_pseudo_labels(pseudo_actions: list[np.ndarray]) -> dict:
 # 4. 세 모델 종합 비교
 # =============================================================================
 
-def build_three_model_comparison(
+def build_model_comparison(
     groot_eval_dir: Path,
     cosmos_eval_dir: Path,
-    dreamdojo_dir: Path,
 ) -> list[dict]:
-    """세 모델 종합 비교 테이블 (Project.md line 1286-1297 기반)"""
+    """모델 종합 비교 테이블"""
 
     return [
         {
             "항목": "모델 타입",
             "GR00T N1.6": "VLA",
+            "Cosmos Predict2.5": "Action-Conditioned World Model",
+            "GR00T IDM": "Inverse Dynamics Model",
             "Cosmos Policy": "Video-to-Policy",
-            "DreamDojo": "World Model",
         },
         {
-            "항목": "본 프로젝트 활용",
-            "GR00T N1.6": "파인튜닝 완료",
-            "Cosmos Policy": "추론 전용",
-            "DreamDojo": "추론 전용",
+            "항목": "본 프로젝트 역할",
+            "GR00T N1.6": "파인튜닝 + 배포",
+            "Cosmos Predict2.5": "후훈련 + 합성 비디오",
+            "GR00T IDM": "pseudo labeling",
+            "Cosmos Policy": "비교 분석 (추론)",
         },
         {
-            "항목": "파인튜닝 GPU",
-            "GR00T N1.6": "1x H100/L40",
-            "Cosmos Policy": "8x H100 80GB",
-            "DreamDojo": "8x H100 80GB",
-        },
-        {
-            "항목": "추론 GPU",
-            "GR00T N1.6": "1x RTX 4090",
-            "Cosmos Policy": "1x (6-10GB)",
-            "DreamDojo": "1x A100+",
+            "항목": "입력",
+            "GR00T N1.6": "카메라 + 언어 + 상태",
+            "Cosmos Predict2.5": "초기 프레임 + EE 행동",
+            "GR00T IDM": "비디오 2프레임 쌍",
+            "Cosmos Policy": "관찰 + 시연",
         },
         {
             "항목": "출력",
-            "GR00T N1.6": "로봇 행동",
-            "Cosmos Policy": "행동+미래+가치",
-            "DreamDojo": "미래 비디오",
+            "GR00T N1.6": "로봇 행동 (6-dim)",
+            "Cosmos Predict2.5": "합성 비디오",
+            "GR00T IDM": "행동 pseudo label",
+            "Cosmos Policy": "행동 + 미래 + 가치",
         },
         {
-            "항목": "언어 이해",
-            "GR00T N1.6": "지원",
-            "Cosmos Policy": "제한적",
-            "DreamDojo": "미지원",
+            "항목": "GPU 요구",
+            "GR00T N1.6": "1x RTX 4090",
+            "Cosmos Predict2.5": "1x RTX 4090",
+            "GR00T IDM": "1x RTX 4090",
+            "Cosmos Policy": "1x (추론만)",
         },
         {
-            "항목": "크로스 플랫폼",
-            "GR00T N1.6": "지원",
-            "Cosmos Policy": "미지원",
-            "DreamDojo": "지원",
-        },
-        {
-            "항목": "실시간 제어",
-            "GR00T N1.6": "가능 (~22Hz)",
-            "Cosmos Policy": "가능",
-            "DreamDojo": "불가 (시뮬레이션)",
+            "항목": "OMX 적용",
+            "GR00T N1.6": "파인튜닝 완료",
+            "Cosmos Predict2.5": "FK 변환으로 적용",
+            "GR00T IDM": "추론 전용",
+            "Cosmos Policy": "LIBERO 전용",
         },
         {
             "항목": "IDM 시너지",
-            "GR00T N1.6": "VLA 학습 데이터 수신",
-            "Cosmos Policy": "미래 예측 → IDM 입력",
-            "DreamDojo": "합성 비디오 → IDM 입력",
+            "GR00T N1.6": "증강 데이터로 재학습",
+            "Cosmos Predict2.5": "합성 비디오 → IDM 입력",
+            "GR00T IDM": "pseudo label 생성",
+            "Cosmos Policy": "비교 참조",
         },
         {
             "항목": "비디오 dtype",
             "GR00T N1.6": "float32 [0,1]",
+            "Cosmos Predict2.5": "uint8 [0,255]",
+            "GR00T IDM": "uint8 [0,255]",
             "Cosmos Policy": "uint8 (pickle)",
-            "DreamDojo": "uint8 [0,255]",
         },
     ]
 
 
 def design_integration_pipeline() -> dict:
-    """DreamDojo + IDM + VLA 통합 파이프라인 설계"""
+    """Cosmos Predict2.5 + IDM + VLA 통합 파이프라인 설계"""
 
     return {
-        "name": "DreamDojo → IDM → VLA 데이터 증강 파이프라인",
+        "name": "Cosmos Predict2.5 → IDM → VLA 데이터 증강 파이프라인",
         "stages": [
             {
                 "stage": 1,
-                "name": "합성 비디오 생성",
-                "tool": "DreamDojo",
-                "input": "초기 상태 이미지 + 로봇 행동 시퀀스",
-                "output": "합성 비디오 (uint8, 480x640, 10 FPS)",
-                "script": "scripts/week9_run_dreamdojo_rollout.py",
+                "name": "FK 변환 (데이터 준비)",
+                "tool": "utils/omx_fk.py",
+                "input": "OMX joint positions (5-dim) + gripper",
+                "output": "Cosmos EE state (6-dim) + action (7-dim)",
+                "note": "URDF 기반 FK: joint → [x,y,z,r,p,y]",
             },
             {
                 "stage": 2,
+                "name": "합성 비디오 생성",
+                "tool": "Cosmos Predict2.5 Action-Conditioned",
+                "input": "초기 프레임 + EE 행동 시퀀스",
+                "output": "합성 비디오 (uint8, action-conditioned)",
+                "note": "OMX 후훈련 모델 사용 (1x RTX 4090)",
+            },
+            {
+                "stage": 3,
                 "name": "비디오 전처리",
-                "tool": "utils/omx_constants.py",
-                "input": "DreamDojo 비디오 (uint8, 480x640)",
+                "tool": "OpenCV + prepare_idm_input()",
+                "input": "Cosmos 합성 비디오 (uint8)",
                 "output": "IDM 입력 (uint8, 256x256, 2-frame pairs)",
                 "note": "리사이즈 + 프레임 페어링",
             },
             {
-                "stage": 3,
+                "stage": 4,
                 "name": "IDM Pseudo Labeling",
-                "tool": "GR00T-IDM",
+                "tool": "GR00T IDM",
                 "input": "2-frame 페어 (uint8, 256x256)",
                 "output": "Action 벡터 (float32, action_horizon x action_dim)",
                 "note": "관절 이름: shoulder_pan 등 (OMX_IDM_JOINT_NAMES)",
             },
             {
-                "stage": 4,
-                "name": "관절 이름 매핑",
-                "tool": "utils/omx_constants.py (OMX_JOINT_MAPPING_INV)",
-                "input": "IDM action (shoulder_pan, shoulder_lift, ...)",
-                "output": "VLA action (joint1, joint2, ...)",
-                "note": "IDM→VLA 관절 이름 변환",
-            },
-            {
                 "stage": 5,
-                "name": "품질 평가",
-                "tool": "vla_action_quality.py 메트릭",
-                "input": "pseudo action 시퀀스",
-                "output": "품질 등급 (A~D) + jerk/consistency 메트릭",
-                "note": "grade B 이상만 VLA 학습에 사용",
+                "name": "관절 이름 매핑 + 품질 평가",
+                "tool": "OMX_JOINT_MAPPING_INV + evaluate_pseudo_labels()",
+                "input": "IDM action (shoulder_pan, ...) + pseudo action 시퀀스",
+                "output": "VLA action (joint1, ...) + 품질 등급 (A~D)",
+                "note": "IDM→VLA 변환 + grade B 이상만 통과",
             },
             {
                 "stage": 6,
-                "name": "VLA 학습 데이터 증강",
+                "name": "VLA 재학습 (데이터 증강)",
                 "tool": "GR00T N1.6 파인튜닝",
-                "input": "실제 데이터 + 고품질 pseudo label 데이터",
+                "input": "실제 데이터 (50 ep) + 고품질 pseudo label 데이터",
                 "output": "증강된 VLA 모델",
-                "note": "비디오 dtype 변환 필요 (uint8→float32)",
+                "note": "비디오 dtype 변환 (uint8→float32) 포함",
             },
         ],
         "data_flow": (
-            "DreamDojo (uint8 video) "
+            "OMX joints → FK → Cosmos EE state/action "
+            "→ Cosmos Predict2.5 (합성 비디오) "
             "→ resize+pair → IDM (uint8 input) "
             "→ pseudo action (IDM joint names) "
             "→ joint mapping (VLA joint names) "
             "→ quality filter (grade≥B) "
             "→ dtype convert (float32) "
-            "→ VLA fine-tuning"
+            "→ VLA re-training"
         ),
     }
 
@@ -382,9 +380,9 @@ def generate_report(
     """마크다운 분석 보고서 생성"""
 
     lines = [
-        "# Week 10: 세 모델 크로스 분석 + IDM 시너지 파이프라인",
+        "# Week 10: 통합 파이프라인 + Cosmos Predict2.5-IDM 시너지",
         "",
-        "## 1. DreamDojo → IDM Pseudo Labeling 결과",
+        "## 1. Cosmos Predict2.5 → IDM Pseudo Labeling 결과",
         "",
         f"- 예측 수: {quality_metrics['num_predictions']}",
         f"- Jerk: {quality_metrics['jerk']}",
@@ -396,7 +394,7 @@ def generate_report(
     ]
 
     # 테이블 헤더
-    cols = ["항목", "GR00T N1.6", "Cosmos Policy", "DreamDojo"]
+    cols = ["항목", "GR00T N1.6", "Cosmos Predict2.5", "GR00T IDM", "Cosmos Policy"]
     lines.append("| " + " | ".join(cols) + " |")
     lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
     for row in three_model_table:
@@ -435,14 +433,14 @@ def generate_report(
 # 터미널 출력
 # =============================================================================
 
-def print_three_model_table(table: list[dict]):
-    """세 모델 비교 테이블 출력"""
-    cols = ["항목", "GR00T N1.6", "Cosmos Policy", "DreamDojo"]
-    widths = [18, 20, 20, 20]
+def print_model_table(table: list[dict]):
+    """모델 비교 테이블 출력"""
+    cols = ["항목", "GR00T N1.6", "Cosmos Predict2.5", "GR00T IDM", "Cosmos Policy"]
+    widths = [18, 18, 24, 18, 18]
 
     sep = "-" * sum(widths)
     print(f"\n{'=' * sum(widths)}")
-    print("  세 모델 종합 비교")
+    print("  모델 종합 비교")
     print(f"{'=' * sum(widths)}")
 
     header = "".join(f"{c:<{w}}" for c, w in zip(cols, widths))
@@ -456,11 +454,11 @@ def print_three_model_table(table: list[dict]):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Week 10: 세 모델 크로스 분석 + IDM 시너지 파이프라인"
+        description="Week 10: 통합 파이프라인 + Cosmos Predict2.5-IDM 시너지"
     )
     parser.add_argument(
-        "--dreamdojo-dir", default="outputs/dreamdojo_rollouts",
-        help="DreamDojo 롤아웃 디렉토리 (Week 9)",
+        "--cosmos-predict-dir", default="outputs/cosmos_predict",
+        help="Cosmos Predict2.5 합성 비디오 디렉토리 (Week 9)",
     )
     parser.add_argument(
         "--groot-eval-dir", default="outputs/eval",
@@ -476,15 +474,20 @@ def main():
     )
     args = parser.parse_args()
 
-    dreamdojo_dir = Path(args.dreamdojo_dir)
+    cosmos_predict_dir = Path(args.cosmos_predict_dir)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("=== Week 10: Cross-Model Analysis + IDM Synergy Pipeline ===\n")
+    print("=== Week 10: Cosmos Predict2.5 + IDM Synergy Pipeline ===\n")
 
-    # 1. DreamDojo 롤아웃 로드 + IDM 입력 변환
-    print("[1/5] DreamDojo 롤아웃 → IDM 입력 변환...")
-    frames = load_dreamdojo_rollout(dreamdojo_dir)
+    # FK 검증 (omx_fk.py 활용)
+    fk = OMXForwardKinematics(robot="omx_f")
+    home_ee = fk.compute([0.0] * 5)
+    print(f"  FK 검증 (홈 포지션): EE = ({home_ee['position'][0]:.4f}, {home_ee['position'][1]:.4f}, {home_ee['position'][2]:.4f}) m")
+
+    # 1. Cosmos Predict2.5 합성 비디오 로드 + IDM 입력 변환
+    print("\n[1/5] Cosmos Predict2.5 합성 비디오 → IDM 입력 변환...")
+    frames = load_cosmos_rollout(cosmos_predict_dir)
     idm_inputs = prepare_idm_input(frames)
     print(f"  IDM 입력 페어: {len(idm_inputs)}개")
     print(f"  비디오 dtype: {frames[0].dtype} (IDM 요구: uint8)")
@@ -506,8 +509,8 @@ def main():
     # 3. 관절 이름 매핑 시연
     print("\n[3/5] 관절 이름 매핑 (IDM → VLA)...")
     print(f"  IDM 이름: {OMX_IDM_JOINT_NAMES}")
-    print(f"  VLA 이름: {[OMX_JOINT_MAPPING.get(n, n) for n in OMX_IDM_JOINT_NAMES]}")
-    print(f"  매핑 예시: shoulder_pan → {OMX_JOINT_MAPPING.get('shoulder_pan', 'N/A')}")
+    print(f"  VLA 이름: {[OMX_JOINT_MAPPING_INV.get(n, n) for n in OMX_IDM_JOINT_NAMES]}")
+    print(f"  매핑 예시: shoulder_pan → {OMX_JOINT_MAPPING_INV.get('shoulder_pan', 'N/A')}")
 
     # 4. 품질 평가
     print("\n[4/5] Pseudo label 품질 평가...")
@@ -517,14 +520,13 @@ def main():
     print(f"  Action Range: {quality_metrics['action_range']}")
     print(f"  품질 등급: {quality_metrics['quality_grade']}")
 
-    # 5. 세 모델 종합 비교
-    print("\n[5/5] 세 모델 종합 비교 + 통합 파이프라인 설계...")
-    three_model_table = build_three_model_comparison(
+    # 5. 모델 종합 비교
+    print("\n[5/5] 모델 종합 비교 + 통합 파이프라인 설계...")
+    model_table = build_model_comparison(
         Path(args.groot_eval_dir),
         Path(args.cosmos_eval_dir),
-        dreamdojo_dir,
     )
-    print_three_model_table(three_model_table)
+    print_model_table(model_table)
 
     pipeline = design_integration_pipeline()
     print(f"\n  통합 파이프라인: {pipeline['name']}")
@@ -534,14 +536,14 @@ def main():
 
     # 보고서 생성
     report_path = generate_report(
-        quality_metrics, three_model_table, pipeline, output_dir
+        quality_metrics, model_table, pipeline, output_dir
     )
     print(f"\n  Report: {report_path}")
 
     # JSON 결과 저장
     result = {
         "quality_metrics": quality_metrics,
-        "three_model_comparison": three_model_table,
+        "model_comparison": model_table,
         "pipeline": pipeline,
     }
     json_path = output_dir / "cross_model_analysis.json"

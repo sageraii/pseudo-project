@@ -1,14 +1,15 @@
 """
 Week 11: 종합 벤치마킹 보고서 생성
 
-12주간 실험 결과를 종합하여 ACT, GR00T, Cosmos Policy, DreamDojo의
-비교 분석 보고서를 생성합니다.
+12주간 실험 결과를 종합하여 ACT, GR00T N1.6, Cosmos Predict2.5, Cosmos Policy의
+비교 분석 보고서를 생성합니다. Cosmos Predict2.5 + IDM 시너지 파이프라인의
+증강 전/후 성능 비교를 포함합니다.
 
 Usage:
     python scripts/week11_benchmark_report.py \
         --eval-dir outputs/eval \
         --cosmos-dir outputs/cosmos_eval \
-        --dreamdojo-dir outputs/dreamdojo_rollouts \
+        --synergy-dir outputs/week10_analysis \
         --output outputs/final_report.md
 """
 
@@ -38,7 +39,7 @@ def load_eval_results(eval_dir: Path) -> dict:
 def generate_report(
     eval_results: dict,
     cosmos_results: dict | None,
-    dreamdojo_results: list | None,
+    synergy_results: dict | None,
     output_path: Path,
 ):
     """마크다운 보고서 생성"""
@@ -49,18 +50,19 @@ def generate_report(
         f"",
         f"**생성일**: {now}",
         f"**플랫폼**: ROBOTIS OMX (5-DOF + 1 Gripper, 6-dim action)",
-        f"**접근법**: Option C 하이브리드 (ACT 베이스라인 + GR00T 파인튜닝 + Cosmos/DreamDojo 추론)",
+        f"**접근법**: Option C+ 하이브리드 (ACT 베이스라인 + GR00T 파인튜닝 + Cosmos Predict2.5 후훈련/IDM 시너지)",
         f"",
         f"---",
         f"",
         f"## 1. 실험 개요",
         f"",
-        f"| 모델 | 역할 | 실험 유형 |",
-        f"|------|------|----------|",
-        f"| ACT | 베이스라인 | OMX 학습 + 배포 |",
-        f"| GR00T N1.6 | VLA 파인튜닝 | OMX 데이터로 파인튜닝 + 배포 |",
-        f"| Cosmos Policy | 추론 전용 | LIBERO 벤치마크 재현 |",
-        f"| DreamDojo | 추론 전용 | 롤아웃 생성 + 품질 분석 |",
+        f"| 모델 | 유형 | 역할 |",
+        f"|------|------|------|",
+        f"| ACT | IL Policy | 베이스라인 (OMX 학습 + 배포) |",
+        f"| GR00T N1.6 | VLA | 파인튜닝 + 배포 (두뇌) |",
+        f"| Cosmos Predict2.5 | World Model | 후훈련 + 합성 비디오 (상상력) |",
+        f"| GR00T IDM | Inverse Dynamics | pseudo labeling (관찰자) |",
+        f"| Cosmos Policy | Video-to-Policy | 비교 분석 (추론 전용) |",
         f"",
     ]
 
@@ -133,42 +135,45 @@ def generate_report(
             f"",
         ])
 
-    # --- DreamDojo ---
+    # --- Cosmos Predict2.5 + IDM 시너지 ---
     lines.extend([
-        f"## 4. DreamDojo 롤아웃 품질",
+        f"## 4. Cosmos Predict2.5 + IDM 시너지 파이프라인",
+        f"",
+        f"```",
+        f"OMX joints → FK → Cosmos EE state/action",
+        f"  → Cosmos Predict2.5 합성 비디오 → IDM pseudo labeling",
+        f"  → 관절 매핑 (IDM→VLA) → 품질 필터 (grade≥B)",
+        f"  → GR00T N1.6 VLA 재학습",
+        f"```",
         f"",
     ])
 
-    if dreamdojo_results:
-        lines.append(f"| Rollout | Duration | Temporal Consistency | Stability |")
-        lines.append(f"|---------|----------|---------------------|-----------|")
-        for r in dreamdojo_results:
-            lines.append(
-                f"| {r.get('rollout_index', 0)} "
-                f"| {r.get('duration_sec', 0)}s "
-                f"| {r.get('temporal_consistency', 0):.4f} "
-                f"| {r.get('long_horizon_stability', 0):.4f} |"
-            )
+    if synergy_results:
+        qm = synergy_results.get("quality_metrics", {})
+        lines.append(f"| 메트릭 | 값 |")
+        lines.append(f"|--------|-----|")
+        lines.append(f"| Pseudo label 수 | {qm.get('num_predictions', 'N/A')} |")
+        lines.append(f"| Jerk | {qm.get('jerk', 'N/A')} |")
+        lines.append(f"| Temporal Consistency | {qm.get('temporal_consistency', 'N/A')} |")
+        lines.append(f"| 품질 등급 | {qm.get('quality_grade', 'N/A')} |")
         lines.append(f"")
     else:
-        lines.append(f"*롤아웃 데이터 없음. week9_run_dreamdojo_rollout.py를 먼저 실행하세요.*")
+        lines.append(f"*시너지 결과 없음. week10_cross_model_analysis.py를 먼저 실행하세요.*")
         lines.append(f"")
 
     # --- 종합 비교 ---
     lines.extend([
         f"## 5. 종합 비교 매트릭스",
         f"",
-        f"| 항목 | ACT | GR00T N1.6 | Cosmos Policy | DreamDojo |",
-        f"|------|-----|------------|---------------|-----------|",
-        f"| 모델 타입 | IL Policy | VLA | Video-to-Policy | World Model |",
-        f"| 본 프로젝트 | 학습+배포 | 파인튜닝+배포 | 추론 전용 | 추론 전용 |",
-        f"| OMX 배포 | ✅ | ✅ | ❌ | ❌ |",
-        f"| 학습 GPU | 1x RTX 4090 | 1x H100 | 8x H100 (범위외) | 8x H100 (범위외) |",
-        f"| 추론 GPU | CPU 가능 | 1x RTX 4090 | 1x (6-10GB) | 1x A100+ |",
-        f"| 추론 속도 | <10ms | ~44ms | 측정필요 | 비실시간 |",
-        f"| 언어 이해 | ❌ | ✅ | 제한적 | ❌ |",
-        f"| 데이터 효율 | 중간 | 낮음 | 높음 | N/A |",
-        f"| 액션 차원 | 6-dim | 6-dim | task별 | 비디오 |",
+        f"| 항목 | ACT | GR00T N1.6 | Cosmos Predict2.5 | GR00T IDM | Cosmos Policy |",
+        f"|------|-----|------------|-------------------|-----------|---------------|",
+        f"| 유형 | IL Policy | VLA | World Model | IDM | Video-to-Policy |",
+        f"| 역할 | 베이스라인 | 파인튜닝+배포 | 합성 비디오 | pseudo label | 비교 분석 |",
+        f"| OMX 배포 | 직접 | 직접 | FK 변환 | 추론 전용 | LIBERO 전용 |",
+        f"| GPU 요구 | CPU 가능 | 1x RTX 4090 | 1x RTX 4090 | 1x RTX 4090 | 1x (추론) |",
+        f"| 추론 속도 | <10ms | ~44ms | 비실시간 | ~20ms | 측정필요 |",
+        f"| 언어 이해 | 불가 | 지원 | 불가 | 불가 | 제한적 |",
+        f"| IDM 시너지 | - | 증강 데이터 수신 | 합성 비디오 생성 | pseudo label | 참조 |",
         f"",
     ])
 
@@ -182,8 +187,8 @@ def generate_report(
         f"| OMX 고성능 조작 | GR00T N1.6 | 대규모 사전학습, 언어 이해 |",
         f"| 저비용/교육용 | ACT | GPU 불필요, 학습 곡선 낮음 |",
         f"| 범용 NL 명령 | GR00T N1.6 | 유일한 NL 직접 지원 |",
+        f"| 데이터 증강 (합성) | Cosmos Predict2.5 + IDM | 합성 비디오 → pseudo label |",
         f"| 정밀 조작 (대규모 GPU) | Cosmos Policy | 50개 시연으로 SOTA |",
-        f"| 안전성 사전 검증 | DreamDojo | 시뮬레이션 기반 평가 |",
         f"",
     ])
 
@@ -193,21 +198,26 @@ def generate_report(
         f"",
         f"1. **논문 의사코드 vs 실제 API의 괴리**",
         f"   - GR00T: `from_pretrained()` → `Gr00tPolicy(model_path=..., embodiment_tag=...)`",
-        f"   - Cosmos: `get_model(cfg)` + `get_action(cfg, model, ...)` 패턴",
-        f"   - DreamDojo: Python 클래스 아닌 config + torchrun 기반",
+        f"   - Cosmos Policy: `get_model(cfg)` + `get_action(cfg, model, ...)` 패턴",
+        f"   - Cosmos Predict2.5: Action-Conditioned 입력 형식 (EE-space)",
         f"",
-        f"2. **GPU 요구사항의 현실적 제약**",
+        f"2. **FK 변환의 중요성**",
+        f"   - OMX는 joint-space, Cosmos Predict2.5는 EE-space 요구",
+        f"   - URDF 기반 FK (Z,Y,Y,Y,X 축) 구현 필수 (utils/omx_fk.py)",
+        f"   - OMX-F vs OMX-L 링크 길이 차이 주의",
+        f"",
+        f"3. **GPU 요구사항의 현실적 제약**",
         f"   - Cosmos Policy 파인튜닝: 8x H100 80GB 필요",
-        f"   - DreamDojo 후훈련: 8 GPU 노드 필요",
-        f"   - Option C 하이브리드: 1x H100으로 GR00T 파인튜닝에 집중",
+        f"   - Cosmos Predict2.5 후훈련: 1x RTX 4090 가능 (8x H100 불필요)",
+        f"   - Option C+ 하이브리드: 1x RTX 4090으로 GR00T + Cosmos Predict2.5 모두 가능",
         f"",
-        f"3. **데이터 포맷 표준화의 중요성**",
-        f"   - OMX LeRobot: HuggingFace datasets (6-dim)",
+        f"4. **데이터 포맷 표준화의 중요성**",
+        f"   - OMX LeRobot: HuggingFace datasets (6-dim joint-space)",
         f"   - GR00T: LeRobot v2 (parquet + mp4 + modality.json)",
-        f"   - Cosmos: pickle observation dict",
-        f"   - DreamDojo: MP4 비디오",
+        f"   - Cosmos Predict2.5: EE-space state/action (FK 변환 필요)",
+        f"   - IDM↔VLA: 관절 이름 매핑 + dtype 변환 (uint8↔float32)",
         f"",
-        f"4. **ACT 베이스라인의 가치**",
+        f"5. **ACT 베이스라인의 가치**",
         f"   - OMX 공식 지원으로 빠른 검증 가능",
         f"   - GR00T 대비 낮은 진입 장벽 (CPU, 빠른 학습)",
         f"   - 비교 기준점으로서 GR00T의 부가가치 정량화",
@@ -228,7 +238,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate final benchmark report")
     parser.add_argument("--eval-dir", default="outputs/eval", help="Week 6 eval results")
     parser.add_argument("--cosmos-dir", default="outputs/cosmos_eval", help="Week 7-8 Cosmos results")
-    parser.add_argument("--dreamdojo-dir", default="outputs/dreamdojo_rollouts", help="Week 9-10 results")
+    parser.add_argument("--synergy-dir", default="outputs/week10_analysis", help="Week 10 synergy results")
     parser.add_argument("--output", default="outputs/final_report.md", help="Output report path")
     args = parser.parse_args()
 
@@ -242,19 +252,20 @@ def main():
     cosmos_results = load_json(cosmos_path)
     print(f"  Cosmos LIBERO: {'loaded' if cosmos_results else 'not found'}")
 
-    dreamdojo_path = Path(args.dreamdojo_dir) / "dreamdojo_rollout_report.json"
-    dreamdojo_results = load_json(dreamdojo_path)
-    if isinstance(dreamdojo_results, list):
-        print(f"  DreamDojo rollouts: {len(dreamdojo_results)} rollouts")
+    synergy_path = Path(args.synergy_dir) / "cross_model_analysis.json"
+    synergy_results = load_json(synergy_path)
+    if synergy_results:
+        qm = synergy_results.get("quality_metrics", {})
+        print(f"  Cosmos+IDM synergy: grade={qm.get('quality_grade', 'N/A')}")
     else:
-        dreamdojo_results = None
-        print(f"  DreamDojo rollouts: not found")
+        synergy_results = None
+        print(f"  Cosmos+IDM synergy: not found")
 
     # 보고서 생성
     generate_report(
         eval_results=eval_results,
         cosmos_results=cosmos_results,
-        dreamdojo_results=dreamdojo_results,
+        synergy_results=synergy_results,
         output_path=Path(args.output),
     )
 
