@@ -2,7 +2,7 @@
 
 **프로젝트**: NVIDIA 로봇 AI 모델 종합 벤치마킹 (12주)
 **플랫폼**: ROBOTIS OMX (5-DOF + 1 Gripper, 6-dim action space)
-**접근법**: Option C 하이브리드 (ACT 베이스라인 + GR00T 파인튜닝 + Cosmos/DreamDojo 추론)
+**접근법**: Option C+ 하이브리드 (ACT 베이스라인 + GR00T 파인튜닝 + Cosmos Predict2.5 후훈련/IDM 시너지)
 
 ---
 
@@ -14,7 +14,8 @@ pseudo-project/
 │   └── omx_modality_config.py            # GR00T 파인튜닝용 OMX 모달리티 설정
 ├── utils/                                 # OMX 공통 유틸리티
 │   ├── __init__.py
-│   └── omx_constants.py                   # OMX 상수 + 관절 매핑 + dtype 변환
+│   ├── omx_constants.py                   # OMX 상수, URDF kinematic 파라미터, 관절 매핑, dtype 변환
+│   └── omx_fk.py                          # URDF 기반 FK (joint → EE pose → Cosmos state/action)
 ├── scripts/
 │   ├── week1_setup_omx_env.sh             # OMX 하드웨어 환경 구축
 │   ├── week2_setup_lerobot.sh             # LeRobot 설치 + 텔레오퍼레이션
@@ -27,8 +28,8 @@ pseudo-project/
 │   ├── week6_eval_omx.py                 # ACT vs GR00T 비교 평가
 │   ├── week7_eval_cosmos_libero.py        # Cosmos Policy LIBERO 벤치마크
 │   ├── week8_cosmos_groot_comparison.py   # Cosmos Policy vs GR00T 비교 분석
-│   ├── week9_run_dreamdojo_rollout.py     # DreamDojo 롤아웃 생성 + 분석
-│   ├── week10_cross_model_analysis.py     # 세 모델 크로스 분석 + IDM 시너지
+│   ├── week9_run_dreamdojo_rollout.py     # DreamDojo 롤아웃 생성 + 분석 (참고)
+│   ├── week10_cross_model_analysis.py     # 통합 파이프라인 + IDM 시너지
 │   └── week11_benchmark_report.py         # 종합 벤치마킹 보고서 생성
 └── SCRIPTS.md                             # 이 문서
 ```
@@ -525,16 +526,29 @@ bash eval.sh cosmos_predict2_2b_480p_libero__inference_only \
 
 ---
 
-## 12. scripts/week9_run_dreamdojo_rollout.py
+## 12. scripts/week9_run_dreamdojo_rollout.py (참고)
+
+> **참고**: DreamDojo는 본 프로젝트에서 Cosmos Predict2.5 Action-Conditioned 모델로 대체되었습니다.
+> 이 스크립트는 DreamDojo 세계 모델의 API 패턴과 품질 메트릭 참고용으로 유지됩니다.
 
 | 항목 | 내용 |
 |------|------|
-| **Week** | Week 9-10 |
-| **목적** | DreamDojo 세계 모델로 미래 비디오 롤아웃 생성 및 품질 분석 |
+| **Week** | Week 9 (참고용) |
+| **목적** | DreamDojo 세계 모델 롤아웃 생성 및 품질 분석 (참고) |
 | **실행 위치** | DreamDojo 환경 |
 | **라인 수** | 204 |
+| **대체** | Cosmos Predict2.5 Action-Conditioned (Week 9 트랙A) |
 
-### 지원 모델
+### DreamDojo vs Cosmos Predict2.5 비교
+
+| 항목 | DreamDojo | Cosmos Predict2.5 |
+|------|-----------|-------------------|
+| 유형 | World Foundation Model | Action-Conditioned World Model |
+| 입력 | 초기 프레임 + 텍스트 | 초기 프레임 + EE 행동 |
+| 후훈련 | 8x H100 80GB 필요 | 1x RTX 4090 가능 |
+| OMX 적용 | 불가 (로봇별 체크포인트 없음) | FK 변환으로 적용 가능 |
+
+### 지원 모델 (DreamDojo)
 
 | 모델 | 로봇 | 해상도 | 파라미터 |
 |------|------|--------|---------|
@@ -542,15 +556,7 @@ bash eval.sh cosmos_predict2_2b_480p_libero__inference_only \
 | `nvidia/DreamDojo-2B-480p-G1` | Unitree G1 | 480x640 | 2B |
 | `nvidia/DreamDojo-2B-480p-YAM` | YAM | 480x640 | 2B |
 
-### 핵심 함수
-
-| 함수 | 역할 |
-|------|------|
-| `check_dreamdojo_available()` | `cosmos_predict2` 패키지 임포트 확인 |
-| `generate_rollout_config()` | 모델명 → config 매핑 |
-| `analyze_rollout_quality()` | 비디오 품질 메트릭 계산 |
-
-### 품질 메트릭
+### 품질 메트릭 (Cosmos Predict2.5 평가에도 재사용)
 
 | 메트릭 | 계산 방법 | 의미 |
 |--------|----------|------|
@@ -559,12 +565,6 @@ bash eval.sh cosmos_predict2_2b_480p_libero__inference_only \
 | mean_intensity | `mean(frames) / 255` | 평균 밝기 |
 | std_intensity | `std(frames) / 255` | 밝기 분산 |
 
-### 제약사항 (코드에 명시)
-
-- 증류 파이프라인: **미공개** → 실시간 10 FPS 불가
-- 텔레오퍼레이션 코드: **미공개** → VR 연동 불가
-- 후훈련: **8x H100 80GB 필요** → 추론만 수행
-
 ### 사용법
 
 ```bash
@@ -572,11 +572,6 @@ python scripts/week9_run_dreamdojo_rollout.py \
     --model nvidia/DreamDojo-2B-480p-GR1 \
     --num-rollouts 5 --rollout-length 150
 ```
-
-### 출력
-
-- `outputs/dreamdojo_rollouts/rollout_*.mp4` (cv2 설치 시)
-- `outputs/dreamdojo_rollouts/dreamdojo_rollout_report.json`
 
 ---
 
@@ -596,10 +591,11 @@ python scripts/week9_run_dreamdojo_rollout.py \
 | 1. 실험 개요 | 4개 모델 역할 정리 | 정적 |
 | 2. ACT vs GR00T 비교 | Success Rate, Latency, Smoothness | `outputs/eval/eval_*.json` |
 | 3. Cosmos Policy LIBERO | 논문 결과 vs 재현 결과 | `outputs/cosmos_eval/cosmos_libero_eval.json` |
-| 4. DreamDojo 롤아웃 품질 | Temporal Consistency, Stability | `outputs/dreamdojo_rollouts/dreamdojo_rollout_report.json` |
-| 5. 종합 비교 매트릭스 | 모델 타입, GPU, 속도, 데이터 효율 | 정적 |
-| 6. 배포 시나리오 | 사용 사례별 권장 모델 | 정적 |
-| 7. 학습된 교훈 | API 괴리, GPU 제약, 데이터 포맷 | 정적 |
+| 4. Cosmos Predict2.5 합성 비디오 | Temporal Consistency, Stability | `outputs/cosmos_predict/cosmos_predict_report.json` |
+| 5. IDM 시너지 파이프라인 | 증강 전/후 성능 비교 | `outputs/week10_analysis/cross_model_analysis.json` |
+| 6. 종합 비교 매트릭스 | 모델 타입, GPU, 속도, 데이터 효율 | 정적 |
+| 7. 배포 시나리오 | 사용 사례별 권장 모델 | 정적 |
+| 8. 학습된 교훈 | API 괴리, GPU 제약, 데이터 포맷 | 정적 |
 
 ### 핵심 함수
 
@@ -629,9 +625,9 @@ python scripts/week11_benchmark_report.py \
 
 | 항목 | 내용 |
 |------|------|
-| **목적** | OMX 로봇 공통 상수, 더미 관측 함수, IDM↔VLA 관절 매핑, 비디오 dtype 변환 |
-| **참조 스크립트** | week3, week4, week6_deploy, week6_eval, week8, week10 |
-| **라인 수** | 130 |
+| **목적** | OMX 로봇 공통 상수, URDF kinematic 파라미터, IDM↔VLA 관절 매핑, 비디오 dtype 변환 |
+| **참조 스크립트** | week3, week4, week6_deploy, week6_eval, week8, week10, `omx_fk.py` |
+| **라인 수** | 209 |
 
 ### OMX 기본 상수
 
@@ -641,19 +637,49 @@ python scripts/week11_benchmark_report.py \
 | `OMX_IMG_SIZE` | `224` | GR00T VLA 입력 이미지 크기 |
 | `OMX_CONTROL_HZ` | `100` | ROS 2 ros2_control 제어 주기 |
 | `OMX_JOINT_NAMES` | `["joint1", ..., "gripper"]` | VLA 관절 이름 (기능 무관) |
+| `OMX_JOINT_AXES` | `["Z", "Y", "Y", "Y", "X"]` | 관절 회전축 (OMX-F/L 공통) |
+
+### URDF 기반 Kinematic 파라미터
+
+URDF에서 추출한 각 관절의 회전축과 부모→자식 링크 간 오프셋입니다. `omx_fk.py`에서 FK 계산에 사용됩니다.
+
+**OMX-F (Follower, 매니퓰레이션, 작업 반경 400mm)**:
+
+| 관절 | 축 | 오프셋 (x, y, z) m | 설명 |
+|------|-----|-------------------|------|
+| joint1 | Z | (-0.01125, 0, 0.034) | 베이스 수평 회전 |
+| joint2 | Y | (0, 0, 0.0635) | 어깨 수직 회전 |
+| joint3 | Y | (0.0415, 0, 0.11315) | 팔꿈치 굴곡 |
+| joint4 | Y | (0.162, 0, 0) | 손목 굴곡 |
+| joint5 | X | (0.0287, 0, 0) | 손목 회전 |
+| EE offset | - | (0.09193, -0.0016, 0) | End-Effector (fixed) |
+
+**OMX-L (Leader, 텔레오퍼레이션, 작업 반경 335mm)**:
+
+| 관절 | 축 | 오프셋 (x, y, z) m | 설명 |
+|------|-----|-------------------|------|
+| joint1 | Z | (-0.0095, 0, 0.0545) | 베이스 수평 회전 |
+| joint2 | Y | (0, 0, 0.042) | 어깨 수직 회전 |
+| joint3 | Y | (0.0375, 0, 0.09) | 팔꿈치 굴곡 |
+| joint4 | Y | (0.1275, 0, 0) | 손목 굴곡 |
+| joint5 | X | (0.0287, 0, 0) | 손목 회전 |
+
+**그리퍼 차이**:
+- OMX-F: 2핑거 mimic (Z축), `gripper_joint_2 = -1 * gripper_joint_1`
+- OMX-L: 1핑거 (Y축), `end_effector_link` 미정의
 
 ### IDM ↔ VLA 관절 이름 매핑
 
 GR00T IDM은 해부학적 이름을, VLA는 기능 무관 이름을 사용합니다. 두 모델 간 데이터 교환 시 매핑이 필요합니다.
 
-| VLA (GR00T N1.6) | IDM (GR00T-Dreams) |
-|-------------------|-------------------|
-| `joint1` | `shoulder_pan` |
-| `joint2` | `shoulder_lift` |
-| `joint3` | `elbow_flex` |
-| `joint4` | `wrist_flex` |
-| `joint5` | `wrist_roll` |
-| `gripper` | `gripper` |
+| VLA (GR00T N1.6) | IDM (GR00T) | 축 | 설명 |
+|-------------------|------------|-----|------|
+| `joint1` | `shoulder_pan` | Z | 베이스 수평 회전 |
+| `joint2` | `shoulder_lift` | Y | 어깨 수직 회전 |
+| `joint3` | `elbow_flex` | Y | 팔꿈치 굴곡 |
+| `joint4` | `wrist_flex` | Y | 손목 굴곡 |
+| `joint5` | `wrist_roll` | X | 손목 회전 |
+| `gripper` | `gripper` | - | 그리퍼 개폐 |
 
 ```python
 from utils.omx_constants import OMX_JOINT_MAPPING, OMX_JOINT_MAPPING_INV
@@ -675,7 +701,7 @@ OMX_JOINT_MAPPING_INV["shoulder_pan"]  # → "joint1"
 ```python
 from utils.omx_constants import convert_video_vla_to_idm, convert_video_idm_to_vla
 
-# VLA → IDM (DreamDojo-IDM 시너지 파이프라인에서 사용)
+# VLA → IDM (Cosmos-IDM 시너지 파이프라인에서 사용)
 idm_video = convert_video_vla_to_idm(vla_video)  # float32 → uint8
 
 # IDM → VLA (pseudo label 학습 데이터 생성 시)
@@ -691,7 +717,77 @@ vla_video = convert_video_idm_to_vla(idm_video)  # uint8 → float32
 
 ---
 
-## 15. scripts/week8_cosmos_groot_comparison.py
+## 15. utils/omx_fk.py
+
+| 항목 | 내용 |
+|------|------|
+| **목적** | URDF 기반 Forward Kinematics: OMX joint → EE pose → Cosmos Predict2.5 입력 변환 |
+| **참조 스크립트** | week10 (Cosmos 후훈련 데이터 변환) |
+| **라인 수** | 275 |
+
+### 역할
+
+Cosmos Predict2.5 Action-Conditioned 모델은 EE-space 입력을 요구합니다. OMX는 joint-space로 데이터를 수집하므로, FK를 통해 joint → EE 변환이 필요합니다.
+
+```
+OMX joint positions (5-dim)
+  → FK (동차 변환 행렬 체인)
+  → EE pose: [x, y, z, roll, pitch, yaw] (6-dim)
+  → Cosmos state/action 형식
+```
+
+### 클래스: OMXForwardKinematics
+
+| 메서드 | 입력 | 출력 | 설명 |
+|--------|------|------|------|
+| `compute()` | joint positions (5) | position + rpy + transform | EE 포즈 계산 |
+| `to_cosmos_state()` | joint positions + gripper | state (6) + gripper (1) | Cosmos 입력 변환 |
+| `compute_cosmos_action()` | 연속 두 프레임 joints | action (7-dim) | 상대 변위 계산 |
+| `batch_to_cosmos_states()` | 궤적 (T, 5) + (T,) | states + actions + grippers | 일괄 변환 |
+
+### Cosmos Predict2.5 데이터 형식
+
+| 키 | 차원 | 설명 |
+|----|------|------|
+| `state` | (6,) | `[x, y, z, roll, pitch, yaw]` EE 포즈 |
+| `continuous_gripper_state` | (1,) | `[0.0 ~ 1.0]` 그리퍼 개폐 |
+| `action` | (7,) | 연속 프레임 간 상대 변위 `[dx, dy, dz, dr, dp, dy, dg]` |
+
+### 사용법
+
+```python
+from utils.omx_fk import OMXForwardKinematics
+
+fk = OMXForwardKinematics(robot="omx_f")
+
+# 단일 관절 → EE 포즈
+ee = fk.compute([0.0, -0.5, 0.3, 0.2, 0.0])
+# → {"position": [x, y, z], "rpy": [roll, pitch, yaw], "transform": 4x4}
+
+# Cosmos state 변환
+cosmos_state = fk.to_cosmos_state([0.0, -0.5, 0.3, 0.2, 0.0], gripper=0.5)
+# → {"state": [x, y, z, r, p, y], "continuous_gripper_state": 0.5}
+
+# 궤적 일괄 변환
+batch = fk.batch_to_cosmos_states(joint_trajectory, gripper_trajectory)
+# → {"states": (T, 6), "actions": (T-1, 7), "continuous_gripper_states": (T,)}
+```
+
+### FK 검증 결과 (홈 포지션)
+
+| 로봇 | EE 위치 (x, y, z) m | 설명 |
+|------|---------------------|------|
+| OMX-F | (0.313, -0.002, 0.211) | 팔 완전 전방 신전 |
+| OMX-L | (0.184, 0.0, 0.187) | 작업 반경 335mm 반영 |
+
+### 의존성
+
+- `numpy`
+- `utils.omx_constants` → `OMX_F_JOINT_PARAMS`, `OMX_F_EE_OFFSET`, `OMX_L_JOINT_PARAMS`
+
+---
+
+## 16. scripts/week8_cosmos_groot_comparison.py
 
 | 항목 | 내용 |
 |------|------|
@@ -733,37 +829,37 @@ python scripts/week8_cosmos_groot_comparison.py \
 
 ---
 
-## 16. scripts/week10_cross_model_analysis.py
+## 17. scripts/week10_cross_model_analysis.py
 
 | 항목 | 내용 |
 |------|------|
 | **Week** | Week 10 |
-| **목적** | 세 모델 크로스 분석 + DreamDojo-IDM 시너지 파이프라인 |
+| **목적** | 통합 파이프라인 (Cosmos Predict2.5 + IDM 시너지) + 증강 재학습 |
 | **실행 위치** | 프로젝트 루트 |
 | **라인 수** | 380 |
 
-### 핵심 시너지 파이프라인
+### Cosmos Predict2.5 + IDM 시너지 파이프라인
 
 ```
-DreamDojo 합성 비디오 (uint8)
+Cosmos Predict2.5 합성 비디오 (action-conditioned)
   → resize + 2-frame pairing
-  → GR00T-IDM pseudo labeling
-  → 관절 이름 매핑 (IDM→VLA)
+  → GR00T IDM pseudo labeling
+  → 관절 이름 매핑 (IDM→VLA: shoulder_pan→joint1 등)
   → 품질 평가 (grade ≥ B만 통과)
   → dtype 변환 (uint8→float32)
-  → GR00T N1.6 VLA 파인튜닝 데이터 증강
+  → GR00T N1.6 VLA 재학습 데이터 증강
 ```
 
 ### 핵심 함수
 
 | 함수 | 역할 |
 |------|------|
-| `load_dreamdojo_rollout()` | DreamDojo 롤아웃 비디오 로드 (또는 더미 생성) |
-| `prepare_idm_input()` | DreamDojo 프레임 → IDM 2-frame pair 변환 |
+| `load_cosmos_rollout()` | Cosmos Predict2.5 합성 비디오 로드 (또는 더미 생성) |
+| `prepare_idm_input()` | 합성 비디오 프레임 → IDM 2-frame pair 변환 |
 | `simulate_idm_inference()` | IDM pseudo labeling 시뮬레이션 |
 | `evaluate_pseudo_labels()` | jerk, temporal consistency 기반 품질 평가 |
-| `build_three_model_comparison()` | 세 모델 종합 비교 테이블 (10개 항목) |
-| `design_integration_pipeline()` | 6단계 통합 파이프라인 설계 |
+| `build_model_comparison()` | 모델 종합 비교 테이블 |
+| `design_integration_pipeline()` | 통합 파이프라인 설계 (증강 전/후 비교) |
 
 ### 품질 평가 메트릭
 
@@ -773,11 +869,19 @@ DreamDojo 합성 비디오 (uint8)
 | `temporal_consistency` | 연속 예측 간 차이 | 낮을수록 일관성 높음 |
 | `quality_grade` | jerk + consistency 기반 | A~D 등급 (B 이상 권장) |
 
+### 데이터 변환 흐름
+
+| 단계 | 변환 | 유틸리티 |
+|------|------|---------|
+| OMX joint → EE pose | FK (Z,Y,Y,Y,X) | `utils/omx_fk.py` |
+| IDM 관절 → VLA 관절 | shoulder_pan → joint1 등 | `OMX_JOINT_MAPPING_INV` |
+| IDM 비디오 → VLA 비디오 | uint8 [0,255] → float32 [0,1] | `convert_video_idm_to_vla()` |
+
 ### 사용법
 
 ```bash
 python scripts/week10_cross_model_analysis.py \
-    --dreamdojo-dir outputs/dreamdojo_rollouts \
+    --cosmos-predict-dir outputs/cosmos_predict \
     --groot-eval-dir outputs/eval \
     --cosmos-eval-dir outputs/cosmos_eval \
     --output-dir outputs/week10_analysis
@@ -798,20 +902,22 @@ python scripts/week10_cross_model_analysis.py \
 ## 실행 순서 (전체 파이프라인)
 
 ```
-Week 1   → week1_setup_omx_env.sh              (환경 구축)
-Week 2   → week2_setup_lerobot.sh               (LeRobot 설치)
-Week 3   → week3_test_groot_inference.py        (GR00T 추론 검증)
-Week 4   → week4_collect_omx_data.sh            (데이터 수집)
-         → week4_convert_omx_to_groot.py        (포맷 변환)
-Week 5   → week5_train_act_baseline.sh          (ACT 학습)
-         → week5_finetune_groot_omx.sh          (GR00T 파인튜닝)
-Week 6   → week6_deploy_groot_omx.py            (GR00T 배포)
-         → week6_eval_omx.py                   (ACT vs GR00T 평가)
-Week 7   → week7_eval_cosmos_libero.py          (Cosmos 평가)
-Week 8   → week8_cosmos_groot_comparison.py     (Cosmos vs GR00T 비교)
-Week 9   → week9_run_dreamdojo_rollout.py       (DreamDojo 롤아웃)
-Week 10  → week10_cross_model_analysis.py       (크로스 분석 + IDM 시너지)
-Week 11  → week11_benchmark_report.py           (종합 보고서)
+Week 1    → week1_setup_omx_env.sh              (환경 구축)
+Week 2    → week2_setup_lerobot.sh               (LeRobot 설치)
+Week 3    → week3_test_groot_inference.py        (GR00T 추론 검증)
+Week 4    → week4_collect_omx_data.sh            (데이터 수집)
+          → week4_convert_omx_to_groot.py        (포맷 변환)
+Week 5    → week5_train_act_baseline.sh          (ACT 학습)
+          → week5_finetune_groot_omx.sh          (GR00T 파인튜닝)
+Week 6    → week6_deploy_groot_omx.py            (GR00T 배포)
+          → week6_eval_omx.py                   (ACT vs GR00T 평가)
+Week 7-8  → [트랙A] week7_eval_cosmos_libero.py  (Cosmos Policy LIBERO 평가)
+          → [트랙A] week8_cosmos_groot_comparison.py (Cosmos vs GR00T 비교)
+          → [트랙B] utils/omx_fk.py 검증 + FK 변환 (Cosmos 데이터 준비)
+Week 9-10 → [트랙A] Cosmos Predict2.5 OMX 후훈련 + 합성 비디오 생성
+          → [트랙B] GR00T IDM pseudo labeling + 품질 필터링
+          → week10_cross_model_analysis.py       (통합 파이프라인 + 증강 재학습)
+Week 11   → week11_benchmark_report.py           (종합 보고서)
 ```
 
 ---
@@ -842,7 +948,21 @@ cfg = PolicyEvalConfig(config=..., ckpt_path=..., ...)
 model, cosmos_config = get_model(cfg)
 ```
 
-### DreamDojo
+### Cosmos Predict2.5 Action-Conditioned
+
+```python
+# OMX joint → Cosmos EE-space 변환
+from utils.omx_fk import OMXForwardKinematics
+
+fk = OMXForwardKinematics(robot="omx_f")
+cosmos_state = fk.to_cosmos_state(joint_positions, gripper=0.5)
+# → {"state": [x, y, z, r, p, y], "continuous_gripper_state": 0.5}
+
+batch = fk.batch_to_cosmos_states(joint_trajectory, gripper_trajectory)
+# → {"states": (T, 6), "actions": (T-1, 7), "continuous_gripper_states": (T,)}
+```
+
+### DreamDojo (참고)
 
 ```bash
 # Python 패키지명: cosmos-predict2
