@@ -894,8 +894,8 @@ python scripts/week10_cross_model_analysis.py \
 
 ### 참조 프로젝트
 
-- `GR00T-IDM-Documentation/src/vla_action_quality.py` (품질 메트릭 원본)
-- `GR00T-IDM-Documentation/src/idm_inference_example.py` (IDM 추론 패턴)
+- `GR00T-Dreams-IDM/examples/vla_action_quality.py` (품질 메트릭 원본)
+- `GR00T-Dreams-IDM/examples/idm_inference_example.py` (IDM 추론 패턴)
 
 ---
 

@@ -18,8 +18,8 @@ Usage:
         --output-dir outputs/week10_analysis
 
 참조:
-    - GR00T-IDM-Documentation/src/vla_action_quality.py (품질 메트릭)
-    - GR00T-IDM-Documentation/src/idm_inference_example.py (IDM 추론 패턴)
+    - GR00T-Dreams-IDM/examples/vla_action_quality.py (품질 메트릭)
+    - GR00T-Dreams-IDM/examples/idm_inference_example.py (IDM 추론 패턴)
     - utils/omx_fk.py (OMX joint → EE pose → Cosmos 입력 변환)
 """
 
@@ -27,6 +27,7 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +46,174 @@ from utils.omx_constants import (
     convert_video_vla_to_idm,
 )
 from utils.omx_fk import OMXForwardKinematics
+
+
+# =============================================================================
+# 0. 실제 시연 기반 품질 임계값 자동 보정
+# =============================================================================
+
+
+@dataclass
+class QualityThresholds:
+    """품질 등급 판정 임계값.
+
+    실제 시연 데이터의 통계로부터 자동 보정되거나,
+    시연 데이터가 없을 경우 기본값을 사용합니다.
+
+    등급 판정 기준:
+        A: jerk < jerk_a AND consistency < tc_a  (실제 시연 수준)
+        B: jerk < jerk_b AND consistency < tc_b  (학습에 사용 가능)
+        C: jerk < jerk_c AND consistency < tc_c  (품질 낮음)
+        D: 그 외 (비현실적 → 폐기)
+    """
+    jerk_a: float = 100.0
+    jerk_b: float = 500.0
+    jerk_c: float = 1000.0
+    tc_a: float = 0.1
+    tc_b: float = 0.3
+    tc_c: float = 0.5
+    source: str = "default"
+    demo_stats: dict = field(default_factory=dict)
+
+
+def load_demo_trajectories(demo_dir: Path) -> list[list[np.ndarray]]:
+    """실제 시연 데이터에서 action 궤적을 로드합니다.
+
+    지원 형식:
+        1. LeRobot v2 parquet: {demo_dir}/data/*.parquet (action 컬럼)
+        2. NumPy 저장: {demo_dir}/actions/*.npy
+        3. JSON 저장: {demo_dir}/episodes/*.json (actions 키)
+
+    Returns:
+        에피소드별 action 시퀀스 리스트.
+        각 에피소드: list[np.ndarray], 각 action shape = (action_horizon, action_dim)
+    """
+    episodes = []
+
+    # 1) NumPy 파일 (.npy)
+    npy_files = sorted(demo_dir.glob("actions/*.npy")) + sorted(demo_dir.glob("*.npy"))
+    if npy_files:
+        for f in npy_files:
+            traj = np.load(f)
+            # (T, action_dim) → list of (1, action_dim) for compatibility
+            if traj.ndim == 2:
+                episodes.append([traj[t:t+1] for t in range(len(traj))])
+            elif traj.ndim == 3:
+                # (T, horizon, dim) → list of (horizon, dim)
+                episodes.append([traj[t] for t in range(len(traj))])
+        print(f"  시연 데이터 로드: {len(episodes)} episodes from .npy")
+        return episodes
+
+    # 2) JSON 파일
+    json_files = sorted(demo_dir.glob("episodes/*.json")) + sorted(demo_dir.glob("*.json"))
+    if json_files:
+        for f in json_files:
+            with open(f) as fp:
+                data = json.load(fp)
+            actions = data.get("actions", data.get("action", []))
+            if actions:
+                traj = np.array(actions, dtype=np.float32)
+                if traj.ndim == 2:
+                    episodes.append([traj[t:t+1] for t in range(len(traj))])
+                elif traj.ndim == 3:
+                    episodes.append([traj[t] for t in range(len(traj))])
+        print(f"  시연 데이터 로드: {len(episodes)} episodes from .json")
+        return episodes
+
+    # 3) LeRobot v2 parquet
+    parquet_files = sorted(demo_dir.glob("data/*.parquet")) + sorted(demo_dir.glob("*.parquet"))
+    if parquet_files:
+        try:
+            import pyarrow.parquet as pq
+            for f in parquet_files:
+                table = pq.read_table(f)
+                # action 컬럼 탐색
+                action_cols = [c for c in table.column_names if c.startswith("action")]
+                if action_cols:
+                    traj = np.column_stack([table[c].to_numpy() for c in sorted(action_cols)])
+                    episodes.append([traj[t:t+1] for t in range(len(traj))])
+            print(f"  시연 데이터 로드: {len(episodes)} episodes from .parquet")
+            return episodes
+        except ImportError:
+            print("  pyarrow 미설치: parquet 파일을 읽을 수 없습니다.")
+
+    return episodes
+
+
+def calibrate_thresholds(demo_dir: Path) -> QualityThresholds:
+    """실제 시연 데이터의 jerk/temporal_consistency 분포에서 임계값을 자동 보정합니다.
+
+    보정 기준 (정규분포 가정):
+        A: mean + 1σ 이내  (실제 시연의 68%가 포함되는 범위)
+        B: mean + 2σ 이내  (실제 시연의 95%가 포함되는 범위)
+        C: mean + 3σ 이내  (실제 시연의 99.7%가 포함되는 범위)
+        D: 3σ 초과          (실제 시연에서 거의 나타나지 않는 수준 → 폐기)
+
+    Args:
+        demo_dir: 실제 시연 데이터가 저장된 디렉토리
+
+    Returns:
+        보정된 QualityThresholds
+    """
+    episodes = load_demo_trajectories(demo_dir)
+
+    if not episodes:
+        print("  시연 데이터를 찾을 수 없습니다. 기본 임계값을 사용합니다.")
+        return QualityThresholds(source="default (no demo data found)")
+
+    # 각 에피소드의 jerk, temporal_consistency 계산
+    jerks = []
+    consistencies = []
+
+    for ep_actions in episodes:
+        if len(ep_actions) < 4:
+            continue
+        trajectory = np.array([a[0] for a in ep_actions])
+        jerks.append(compute_jerk(trajectory))
+        consistencies.append(compute_temporal_consistency(ep_actions))
+
+    if not jerks:
+        print("  유효한 에피소드가 부족합니다 (최소 4 프레임 필요). 기본 임계값을 사용합니다.")
+        return QualityThresholds(source="default (insufficient episodes)")
+
+    jerks = np.array(jerks)
+    consistencies = np.array(consistencies)
+
+    jerk_mean, jerk_std = float(jerks.mean()), float(jerks.std())
+    tc_mean, tc_std = float(consistencies.mean()), float(consistencies.std())
+
+    # std가 0인 경우 (모든 에피소드가 동일) → mean의 비율로 대체
+    if jerk_std < 1e-9:
+        jerk_std = max(jerk_mean * 0.2, 1.0)
+    if tc_std < 1e-9:
+        tc_std = max(tc_mean * 0.2, 0.01)
+
+    thresholds = QualityThresholds(
+        jerk_a=jerk_mean + 1.0 * jerk_std,
+        jerk_b=jerk_mean + 2.0 * jerk_std,
+        jerk_c=jerk_mean + 3.0 * jerk_std,
+        tc_a=tc_mean + 1.0 * tc_std,
+        tc_b=tc_mean + 2.0 * tc_std,
+        tc_c=tc_mean + 3.0 * tc_std,
+        source=f"calibrated from {len(jerks)} episodes",
+        demo_stats={
+            "num_episodes": len(jerks),
+            "jerk_mean": round(jerk_mean, 4),
+            "jerk_std": round(jerk_std, 4),
+            "jerk_min": round(float(jerks.min()), 4),
+            "jerk_max": round(float(jerks.max()), 4),
+            "tc_mean": round(tc_mean, 4),
+            "tc_std": round(tc_std, 4),
+            "tc_min": round(float(consistencies.min()), 4),
+            "tc_max": round(float(consistencies.max()), 4),
+        },
+    )
+
+    print(f"  보정 완료 ({len(jerks)} episodes):")
+    print(f"    Jerk     — mean={jerk_mean:.2f}, std={jerk_std:.2f} → A<{thresholds.jerk_a:.2f}, B<{thresholds.jerk_b:.2f}, C<{thresholds.jerk_c:.2f}")
+    print(f"    Temporal — mean={tc_mean:.4f}, std={tc_std:.4f} → A<{thresholds.tc_a:.4f}, B<{thresholds.tc_b:.4f}, C<{thresholds.tc_c:.4f}")
+
+    return thresholds
 
 
 # =============================================================================
@@ -97,11 +266,19 @@ def load_cosmos_rollout(rollout_dir: Path) -> list[np.ndarray]:
 def prepare_idm_input(frames: list[np.ndarray]) -> list[dict]:
     """합성 비디오 프레임을 IDM 입력 포맷으로 변환.
 
-    IDM은 연속 2 프레임 (t, t+1)을 입력으로 받아 action을 예측합니다.
+    IDM 입력 요구사항 (idm.py validate_inputs 기준):
+        - video: np.ndarray, dtype uint8
+        - shape: (B, T, V, H, W, C) where shape[3] == 3 (color channels)
+        즉 V(뷰 수)가 3번째 차원(0-indexed)이 아닌, H가 3번째 차원.
+        실제 shape: (1, 2, 1, H, W, 3) → shape[3] == H (not 3)
+        ※ idm.py line 102: shape[3] == N_COLOR_CHANNELS (3)
+           이는 V(뷰) 차원이 3인 경우를 가정. 단일 카메라면 V=1이므로
+           검증이 실패할 수 있음 → 뷰 차원에 3 맞추기 or 검증 스킵 필요.
+
     Cosmos Predict2.5 출력은 이미 uint8이므로 dtype 변환 불필요.
 
     Args:
-        frames: uint8 프레임 리스트, 각 (256, 256, 3)
+        frames: uint8 프레임 리스트, 각 (H, W, 3)
 
     Returns:
         IDM 입력 딕셔너리 리스트
@@ -111,7 +288,10 @@ def prepare_idm_input(frames: list[np.ndarray]) -> list[dict]:
         frame_t = frames[i]
         frame_t1 = frames[i + 1]
 
-        # IDM 입력 형태: (1, 2, 1, 256, 256, 3) uint8
+        # IDM 입력 형태: (B=1, T=2, V=1, H, W, C=3) uint8
+        # V=1 (단일 카메라) — 실제 IDM validate_inputs에서 shape[3]==3 검증은
+        # V 차원이 아닌 C 차원을 가리킴 (6D shape에서 index 3 = H)
+        # 실제 사용 시 transforms_idm.py의 _prepare_video가 rearrange로 처리
         video = np.stack([frame_t, frame_t1])[np.newaxis, :, np.newaxis, ...]
         assert video.dtype == VIDEO_DTYPE_IDM, (
             f"IDM 입력은 uint8이어야 합니다. 현재: {video.dtype}"
@@ -126,37 +306,212 @@ def prepare_idm_input(frames: list[np.ndarray]) -> list[dict]:
 
 
 # =============================================================================
-# 2. IDM Pseudo Labeling (시뮬레이션)
+# 2. IDM Pseudo Labeling
 # =============================================================================
 
-def simulate_idm_inference(idm_inputs: list[dict]) -> list[np.ndarray]:
-    """IDM pseudo labeling 시뮬레이션.
+# OMX modality.json에 대응하는 action 인덱스 매핑
+# (GR00T-Dreams-IDM/IDM_dump/global_metadata/omx/modality.json 참조)
+OMX_ACTION_MODALITY = {
+    "shoulder_pan":  {"start": 0, "end": 1},
+    "shoulder_lift": {"start": 1, "end": 2},
+    "elbow_flex":    {"start": 2, "end": 3},
+    "wrist_flex":    {"start": 3, "end": 4},
+    "wrist_roll":    {"start": 4, "end": 5},
+    "gripper":       {"start": 5, "end": 6},
+}
 
-    실제 IDM 모델 없이 파이프라인 구조를 검증합니다.
-    실제 사용 시:
-        from gr00t.model.idm import IDM
-        model = IDM.from_pretrained("nvidia/GR00T-IDM")
-        output = model.get_action(batch)
+# Embodiment ID for OMX (transforms_idm.py _EMBODIMENT_TAG_MAPPING)
+OMX_EMBODIMENT_ID = 30
+
+# <DREAM> 접두사: 합성 데이터 식별 규약 (dump_idm_actions.py 참조)
+DREAM_PREFIX = "<DREAM>"
+
+
+def reassemble_actions_by_modality(
+    raw_actions: np.ndarray,
+    modality_map: dict = OMX_ACTION_MODALITY,
+) -> dict[str, np.ndarray]:
+    """IDM 출력(max_action_dim=32 벡터)을 modality.json 기준으로 관절별 분리.
+
+    실제 IDM은 32차원 벡터를 출력하며, modality.json의 start/end 인덱스로
+    각 관절에 해당하는 슬라이스를 추출합니다.
+
+    Args:
+        raw_actions: shape (action_horizon, max_action_dim) — IDM 원본 출력
+        modality_map: 관절별 start/end 인덱스
 
     Returns:
-        예측된 action 시퀀스 (각 action: shape (action_horizon, action_dim))
+        관절 이름 → (action_horizon, joint_dim) 매핑
+    """
+    result = {}
+    for joint_name, indices in modality_map.items():
+        result[joint_name] = raw_actions[:, indices["start"]:indices["end"]]
+    return result
+
+
+def unapply_normalization(
+    actions: np.ndarray,
+    stats: dict | None = None,
+) -> np.ndarray:
+    """IDM 예측 action의 역정규화 (denormalization).
+
+    실제 IDM 파이프라인에서는 dataset.transforms.unapply(Batch(action=...))를
+    호출하여 정규화된 action을 물리적 단위로 복원합니다.
+    (dump_idm_actions.py line 258 참조)
+
+    여기서는 min_max 정규화의 역변환을 수행합니다:
+        action_real = action_norm * (max - min) + min
+
+    Args:
+        actions: 정규화된 action, shape (T, D)
+        stats: {"min": [...], "max": [...]} — 정규화 통계
+               None이면 역정규화를 건너뜁니다 (placeholder stats 사용 시)
+
+    Returns:
+        역정규화된 action, shape (T, D)
+    """
+    if stats is None:
+        # stats.json이 placeholder (mean=0, std=1)이면 역정규화 불필요
+        return actions
+
+    action_min = np.array(stats["min"], dtype=np.float32)
+    action_max = np.array(stats["max"], dtype=np.float32)
+
+    # min_max 역변환: norm * (max - min) + min
+    denormed = actions * (action_max - action_min) + action_min
+    return denormed
+
+
+def multistep_average(
+    per_step_predictions: list[np.ndarray],
+    action_horizon: int,
+    num_frames: int,
+) -> np.ndarray:
+    """겹치는 IDM 예측을 timestep별로 평균화.
+
+    실제 dump_idm_actions.py의 핵심 로직:
+    각 시작점 s에서 action_horizon 길이의 예측을 하면,
+    timestep t에 대해 여러 윈도우의 예측이 겹칩니다.
+    이 겹치는 예측들을 평균하여 안정적인 최종 action을 얻습니다.
+
+    Args:
+        per_step_predictions: 시작점별 예측 리스트, 각 (action_horizon, action_dim)
+        action_horizon: IDM action horizon (16)
+        num_frames: 전체 프레임 수
+
+    Returns:
+        평균화된 action 시퀀스, shape (num_frames, action_dim)
+    """
+    from collections import defaultdict
+
+    action_dict = defaultdict(list)
+
+    for s, pred in enumerate(per_step_predictions):
+        for j in range(min(action_horizon, pred.shape[0])):
+            if s + j < num_frames:
+                action_dict[s + j].append(pred[j])
+
+    # 각 timestep에 대해 모든 예측을 평균
+    averaged = np.zeros((num_frames, per_step_predictions[0].shape[-1]), dtype=np.float32)
+    for t in range(num_frames):
+        if action_dict[t]:
+            averaged[t] = np.mean(action_dict[t], axis=0)
+
+    return averaged
+
+
+def simulate_idm_inference(
+    idm_inputs: list[dict],
+    use_multistep_avg: bool = True,
+) -> list[np.ndarray]:
+    """IDM pseudo labeling (시뮬레이션 모드).
+
+    실제 IDM 모델 없이 파이프라인 구조를 검증합니다.
+    IDM 가중치는 HuggingFace에 공개되지 않으므로 직접 학습이 필요합니다.
+    (학습: GR00T-Dreams-IDM/scripts/idm_training.py + IDM_dump/base.yaml)
+
+    실제 사용 시 (GR00T-Dreams-IDM/IDM_dump/dump_idm_actions.py 기준):
+        1. 모델 로딩 (IDM 가중치는 HuggingFace 비공개 → 직접 학습 필요):
+            from gr00t.model.idm import IDM
+            model = IDM.from_pretrained("/path/to/local/idm_checkpoint")
+            model.eval().cuda()
+
+        2. Transform 준비:
+            from gr00t.experiment.data_config_idm import DATA_CONFIG_MAP
+            data_config = DATA_CONFIG_MAP["omx"]
+            transforms = data_config.transform()
+
+        3. 배치 구성 (transforms_idm.py 처리):
+            - SiGLIP 이미지 전처리: siglip2-large-patch16-256
+            - 토큰 구성: IMG(1) x num_visual_tokens + ACT(4) x action_horizon
+            - embodiment_id: 30 (OMX)
+
+        4. 추론:
+            output = model.get_action(batch)
+            raw_actions = output["action_pred"]  # (1, action_horizon, max_action_dim)
+
+        5. 역정규화 (핵심 — 누락 시 물리적 의미 없는 값):
+            pred_actions = transforms.unapply(Batch(action=raw_actions))
+
+        6. modality.json 기반 관절별 재조립
+
+    Returns:
+        예측된 action 시퀀스 리스트 (각: shape (action_horizon, action_dim))
     """
     action_horizon = 16
     action_dim = OMX_DOF
+    max_action_dim = 32  # IDM 출력 차원 (32차원 중 OMX는 6차원만 사용)
 
-    pseudo_actions = []
+    # === 시뮬레이션: 부드러운 랜덤 action 생성 ===
+    # 실제에서는 model.get_action(batch) 호출
+    raw_predictions = []
     for inp in idm_inputs:
-        # 시뮬레이션: 부드러운 랜덤 action 생성
-        # 실제: model.get_action(inp) 호출
-        base_action = np.random.randn(action_dim).astype(np.float32) * 0.1
-        action_seq = np.zeros((action_horizon, action_dim), dtype=np.float32)
+        base_action = np.random.randn(max_action_dim).astype(np.float32) * 0.1
+        raw_seq = np.zeros((action_horizon, max_action_dim), dtype=np.float32)
         for t in range(action_horizon):
-            noise = np.random.randn(action_dim).astype(np.float32) * 0.02
-            action_seq[t] = base_action + noise * t / action_horizon
+            noise = np.random.randn(max_action_dim).astype(np.float32) * 0.02
+            raw_seq[t] = base_action + noise * t / action_horizon
+        raw_predictions.append(raw_seq)
 
-        pseudo_actions.append(action_seq)
+    # === 역정규화 (denormalization) ===
+    # 실제: pred_actions = dataset.transforms.unapply(Batch(action=raw_actions))
+    # 시뮬레이션: stats.json이 placeholder이므로 identity 변환
+    denormed_predictions = []
+    for raw_pred in raw_predictions:
+        denormed = unapply_normalization(raw_pred, stats=None)
+        denormed_predictions.append(denormed)
 
-    return pseudo_actions
+    # === modality.json 기반 관절별 재조립 ===
+    # 32차원 IDM 출력에서 OMX 6개 관절에 해당하는 슬라이스 추출
+    reassembled_predictions = []
+    for pred in denormed_predictions:
+        joint_actions = reassemble_actions_by_modality(pred)
+        # 관절별 결과를 다시 연결하여 (action_horizon, 6) 형태로
+        omx_action = np.concatenate(
+            [joint_actions[name] for name in OMX_ACTION_MODALITY.keys()],
+            axis=-1,
+        )
+        reassembled_predictions.append(omx_action)
+
+    # === Multi-step 평균화 (선택적) ===
+    if use_multistep_avg and len(reassembled_predictions) > 1:
+        num_frames = len(reassembled_predictions)
+        averaged = multistep_average(
+            reassembled_predictions, action_horizon, num_frames
+        )
+        # 평균화된 결과를 action_horizon 단위로 재분할
+        pseudo_actions = []
+        for i in range(0, num_frames, action_horizon):
+            end = min(i + action_horizon, num_frames)
+            chunk = averaged[i:end]
+            if chunk.shape[0] < action_horizon:
+                # 패딩
+                pad = np.zeros((action_horizon - chunk.shape[0], action_dim), dtype=np.float32)
+                chunk = np.concatenate([chunk, pad], axis=0)
+            pseudo_actions.append(chunk)
+        return pseudo_actions
+
+    return reassembled_predictions
 
 
 # =============================================================================
@@ -194,8 +549,19 @@ def compute_temporal_consistency(actions: list[np.ndarray]) -> float:
     return float(np.mean(diffs))
 
 
-def evaluate_pseudo_labels(pseudo_actions: list[np.ndarray]) -> dict:
-    """pseudo label 품질 종합 평가"""
+def evaluate_pseudo_labels(
+    pseudo_actions: list[np.ndarray],
+    thresholds: QualityThresholds | None = None,
+) -> dict:
+    """pseudo label 품질 종합 평가.
+
+    Args:
+        pseudo_actions: IDM이 예측한 action 시퀀스 리스트
+        thresholds: 품질 등급 임계값. None이면 기본값 사용.
+                    calibrate_thresholds()로 실제 시연 데이터 기반 보정 가능.
+    """
+    if thresholds is None:
+        thresholds = QualityThresholds()
 
     # 전체 궤적 구성 (각 action의 첫 timestep 연결)
     trajectory = np.array([a[0] for a in pseudo_actions])
@@ -208,12 +574,12 @@ def evaluate_pseudo_labels(pseudo_actions: list[np.ndarray]) -> dict:
     action_range = float(all_actions.max() - all_actions.min())
     action_std = float(all_actions.std())
 
-    # 품질 등급 판정
-    if jerk < 100 and temporal_consistency < 0.1:
+    # 품질 등급 판정 (임계값 기반)
+    if jerk < thresholds.jerk_a and temporal_consistency < thresholds.tc_a:
         grade = "A"
-    elif jerk < 500 and temporal_consistency < 0.3:
+    elif jerk < thresholds.jerk_b and temporal_consistency < thresholds.tc_b:
         grade = "B"
-    elif jerk < 1000 and temporal_consistency < 0.5:
+    elif jerk < thresholds.jerk_c and temporal_consistency < thresholds.tc_c:
         grade = "C"
     else:
         grade = "D"
@@ -226,6 +592,12 @@ def evaluate_pseudo_labels(pseudo_actions: list[np.ndarray]) -> dict:
         "action_range": round(action_range, 4),
         "action_std": round(action_std, 4),
         "quality_grade": grade,
+        "thresholds_source": thresholds.source,
+        "thresholds": {
+            "jerk": [round(thresholds.jerk_a, 4), round(thresholds.jerk_b, 4), round(thresholds.jerk_c, 4)],
+            "temporal_consistency": [round(thresholds.tc_a, 4), round(thresholds.tc_b, 4), round(thresholds.tc_c, 4)],
+        },
+        "demo_stats": thresholds.demo_stats if thresholds.demo_stats else None,
     }
 
 
@@ -323,46 +695,57 @@ def design_integration_pipeline() -> dict:
             },
             {
                 "stage": 3,
-                "name": "비디오 전처리",
-                "tool": "OpenCV + prepare_idm_input()",
+                "name": "SiGLIP 전처리 + IDM 입력 구성",
+                "tool": "GR00TIDMTransform (transforms_idm.py)",
                 "input": "Cosmos 합성 비디오 (uint8)",
-                "output": "IDM 입력 (uint8, 256x256, 2-frame pairs)",
-                "note": "리사이즈 + 프레임 페어링",
+                "output": "IDM 배치 (images, vl_token_ids, sa_token_ids, embodiment_id=30)",
+                "note": "SiGLIP siglip2-large-patch16-256 전처리, 프레임당 16 visual tokens",
             },
             {
                 "stage": 4,
                 "name": "IDM Pseudo Labeling",
-                "tool": "GR00T IDM",
-                "input": "2-frame 페어 (uint8, 256x256)",
-                "output": "Action 벡터 (float32, action_horizon x action_dim)",
-                "note": "관절 이름: shoulder_pan 등 (OMX_IDM_JOINT_NAMES)",
+                "tool": "IDM.from_pretrained() + model.get_action()",
+                "input": "SiGLIP 처리된 배치 (embodiment_id=30, OMX)",
+                "output": "정규화된 Action (float32, action_horizon=16, max_action_dim=32)",
+                "note": "OMX embodiment slot 30, action 32차원 중 6차원 사용",
             },
             {
                 "stage": 5,
-                "name": "관절 이름 매핑 + 품질 평가",
-                "tool": "OMX_JOINT_MAPPING_INV + evaluate_pseudo_labels()",
-                "input": "IDM action (shoulder_pan, ...) + pseudo action 시퀀스",
-                "output": "VLA action (joint1, ...) + 품질 등급 (A~D)",
-                "note": "IDM→VLA 변환 + grade B 이상만 통과",
+                "name": "역정규화 + modality.json 재조립",
+                "tool": "transforms.unapply() + reassemble_actions_by_modality()",
+                "input": "정규화된 32-dim action",
+                "output": "물리 단위 6-dim OMX action (shoulder_pan, ..., gripper)",
+                "note": "역정규화 필수 (누락 시 물리적 의미 없음), multi-step 평균화",
             },
             {
                 "stage": 6,
+                "name": "품질 평가 + 관절 매핑",
+                "tool": "evaluate_pseudo_labels() + OMX_JOINT_MAPPING_INV",
+                "input": "IDM action (shoulder_pan, ...) + pseudo action 시퀀스",
+                "output": "VLA action (joint1, ...) + 품질 등급 (A~D)",
+                "note": "IDM→VLA 관절 이름 변환, grade B 이상만 통과",
+            },
+            {
+                "stage": 7,
                 "name": "VLA 재학습 (데이터 증강)",
                 "tool": "GR00T N1.6 파인튜닝",
                 "input": "실제 데이터 (50 ep) + 고품질 pseudo label 데이터",
                 "output": "증강된 VLA 모델",
-                "note": "비디오 dtype 변환 (uint8→float32) 포함",
+                "note": "비디오 dtype 변환 (uint8→float32), <DREAM> 접두사로 합성 데이터 식별",
             },
         ],
         "data_flow": (
             "OMX joints → FK → Cosmos EE state/action "
             "→ Cosmos Predict2.5 (합성 비디오) "
-            "→ resize+pair → IDM (uint8 input) "
-            "→ pseudo action (IDM joint names) "
-            "→ joint mapping (VLA joint names) "
+            "→ SiGLIP 전처리 + IDM 배치 구성 (embodiment=30) "
+            "→ IDM.get_action() (정규화된 32-dim) "
+            "→ transforms.unapply() 역정규화 "
+            "→ modality.json 재조립 (6-dim OMX) "
+            "→ multi-step 평균화 "
             "→ quality filter (grade≥B) "
-            "→ dtype convert (float32) "
-            "→ VLA re-training"
+            "→ joint mapping (IDM→VLA) "
+            "→ dtype convert (uint8→float32) "
+            "→ <DREAM> prefix + VLA re-training"
         ),
     }
 
@@ -388,10 +771,36 @@ def generate_report(
         f"- Jerk: {quality_metrics['jerk']}",
         f"- Temporal Consistency: {quality_metrics['temporal_consistency']}",
         f"- 품질 등급: **{quality_metrics['quality_grade']}**",
+        f"- 임계값 출처: {quality_metrics['thresholds_source']}",
         "",
-        "## 2. 모델 종합 비교",
+        "### 등급 임계값",
+        "",
+        "| 등급 | Jerk 상한 | Temporal Consistency 상한 |",
+        "|------|----------|-------------------------|",
+        f"| A | < {quality_metrics['thresholds']['jerk'][0]} | < {quality_metrics['thresholds']['temporal_consistency'][0]} |",
+        f"| B | < {quality_metrics['thresholds']['jerk'][1]} | < {quality_metrics['thresholds']['temporal_consistency'][1]} |",
+        f"| C | < {quality_metrics['thresholds']['jerk'][2]} | < {quality_metrics['thresholds']['temporal_consistency'][2]} |",
+        "| D | 그 외 | 그 외 |",
         "",
     ]
+
+    demo_stats = quality_metrics.get("demo_stats")
+    if demo_stats:
+        lines.extend([
+            "### 보정 기반 시연 데이터 통계",
+            "",
+            f"- 에피소드 수: {demo_stats['num_episodes']}",
+            f"- Jerk: mean={demo_stats['jerk_mean']}, std={demo_stats['jerk_std']}, "
+            f"range=[{demo_stats['jerk_min']}, {demo_stats['jerk_max']}]",
+            f"- Temporal Consistency: mean={demo_stats['tc_mean']}, std={demo_stats['tc_std']}, "
+            f"range=[{demo_stats['tc_min']}, {demo_stats['tc_max']}]",
+            "",
+        ])
+
+    lines.extend([
+        "## 2. 모델 종합 비교",
+        "",
+    ])
 
     # 테이블 헤더
     cols = ["항목", "GR00T N1.6", "Cosmos Predict2.5", "GR00T IDM", "Cosmos Policy"]
@@ -469,6 +878,11 @@ def main():
         help="Cosmos Policy 평가 결과 디렉토리 (Week 7)",
     )
     parser.add_argument(
+        "--demo-dir", default=None,
+        help="실제 시연 데이터 디렉토리 (품질 임계값 자동 보정용). "
+             "지원 형식: .npy, .json, .parquet",
+    )
+    parser.add_argument(
         "--output-dir", default="outputs/week10_analysis",
         help="분석 결과 출력 디렉토리",
     )
@@ -512,13 +926,27 @@ def main():
     print(f"  VLA 이름: {[OMX_JOINT_MAPPING_INV.get(n, n) for n in OMX_IDM_JOINT_NAMES]}")
     print(f"  매핑 예시: shoulder_pan → {OMX_JOINT_MAPPING_INV.get('shoulder_pan', 'N/A')}")
 
-    # 4. 품질 평가
+    # 4. 품질 임계값 보정 + 품질 평가
     print("\n[4/5] Pseudo label 품질 평가...")
-    quality_metrics = evaluate_pseudo_labels(pseudo_actions)
+
+    thresholds = None
+    if args.demo_dir:
+        demo_path = Path(args.demo_dir)
+        if demo_path.exists():
+            print(f"  실제 시연 데이터로 임계값 보정 중... ({demo_path})")
+            thresholds = calibrate_thresholds(demo_path)
+        else:
+            print(f"  경고: --demo-dir 경로가 존재하지 않습니다: {demo_path}")
+            print(f"  기본 임계값을 사용합니다.")
+    else:
+        print("  --demo-dir 미지정: 기본 임계값 사용 (실제 시연 데이터로 보정 권장)")
+
+    quality_metrics = evaluate_pseudo_labels(pseudo_actions, thresholds)
     print(f"  Jerk: {quality_metrics['jerk']}")
     print(f"  Temporal Consistency: {quality_metrics['temporal_consistency']}")
     print(f"  Action Range: {quality_metrics['action_range']}")
     print(f"  품질 등급: {quality_metrics['quality_grade']}")
+    print(f"  임계값 출처: {quality_metrics['thresholds_source']}")
 
     # 5. 모델 종합 비교
     print("\n[5/5] 모델 종합 비교 + 통합 파이프라인 설계...")
