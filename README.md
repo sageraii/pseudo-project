@@ -8,6 +8,7 @@ Option C+ 하이브리드 접근법을 채택하여, ACT 베이스라인 및 GR0
 
 | 모델 | 유형 | 역할 |
 |------|------|------|
+| ACT | Imitation Learning Policy | 베이스라인 (OMX 학습 + 배포) |
 | GR00T N1.6 | Vision-Language-Action (VLA) | 카메라+언어 입력으로 직접 로봇 행동 생성 (두뇌) |
 | Cosmos Predict2.5 | World Model (Action-Conditioned) | 행동에 따른 미래 비디오 예측 (상상력) |
 | GR00T IDM | Inverse Dynamics Model | 비디오에서 행동 역추정 (관찰자) |
@@ -15,13 +16,15 @@ Option C+ 하이브리드 접근법을 채택하여, ACT 베이스라인 및 GR0
 
 ## 모델 비교
 
-| 항목 | GR00T N1.6 | Cosmos Predict2.5 | GR00T IDM | Cosmos Policy |
-|------|-----------|-------------------|-----------|--------------|
-| 역할 | 행동 결정 | 미래 비디오 생성 | pseudo labeling | 비교 분석 |
-| 입력 | 카메라 + 언어 + 상태 | 초기 프레임 + 행동(EE) | 비디오 2프레임 쌍 | 관찰 + 시연 |
-| 출력 | 로봇 행동 (6-dim) | 합성 비디오 | 행동 pseudo label | 행동 + 미래 + 가치 |
-| GPU 요구 | 1x RTX 4090 | 1x RTX 4090 | 1x RTX 4090 | 1x (추론만) |
-| 본 프로젝트 | 파인튜닝 + 배포 | 후훈련 + 추론 | 추론 | 추론 전용 |
+| 항목 | ACT | GR00T N1.6 | Cosmos Predict2.5 | GR00T IDM | Cosmos Policy |
+|------|-----|-----------|-------------------|-----------|--------------|
+| 역할 | 베이스라인 | 행동 결정 | 미래 비디오 생성 | pseudo labeling | 비교 분석 |
+| 입력 | 카메라 + 상태 | 카메라 + 언어 + 상태 | 초기 프레임 + 행동(EE) | 비디오 2프레임 쌍 | 관찰 + 시연 |
+| 출력 | 로봇 행동 (6-dim) | 로봇 행동 (6-dim) | 합성 비디오 | 행동 pseudo label | 행동 + 미래 + 가치 |
+| GPU 요구 | CPU 가능 | 1x RTX 4090 | 1x RTX 4090 | 1x RTX 4090 | 1x (추론만) |
+| 추론 속도 | <10ms | ~44ms | 비실시간 | ~20ms | 측정필요 |
+| 언어 이해 | 불가 | 지원 | 불가 | 불가 | 제한적 |
+| 본 프로젝트 | 학습 + 배포 | 파인튜닝 + 배포 | 후훈련 + 추론 | 추론 | 추론 전용 |
 
 ## 디렉토리 구조
 
@@ -46,7 +49,7 @@ pseudo-project/
 │   ├── week7_eval_cosmos_libero.py  # Cosmos Policy LIBERO 벤치마크
 │   ├── week8_cosmos_groot_comparison.py # Cosmos vs GR00T 비교 분석
 │   ├── week9_run_dreamdojo_rollout.py  # DreamDojo 롤아웃 생성 + 분석 (참고)
-│   ├── week10_cross_model_analysis.py  # 통합 파이프라인 + IDM 시너지
+│   ├── week10_cross_model_analysis.py  # 통합 파이프라인 + Cosmos Predict2.5-IDM 시너지
 │   └── week11_benchmark_report.py      # 종합 벤치마킹 보고서 생성
 ├── Project.md                       # 상세 프로젝트 명세
 ├── SCRIPTS.md                       # 스크립트별 기술 문서
@@ -66,7 +69,7 @@ pseudo-project/
 | | **트랙B**: Cosmos Predict2.5 환경 + FK 변환 | `omx_fk.py`, Cosmos 데이터 변환 |
 | 9 | **트랙A**: Cosmos Predict2.5 OMX 후훈련 | OMX 전용 세계 모델 + 합성 비디오 |
 | | **트랙B**: GR00T IDM pseudo labeling | 품질 필터링된 pseudo label |
-| 10 | 통합 파이프라인 (증강 재학습) | 증강 전/후 성능 비교 |
+| 10 | 통합 파이프라인 (Cosmos Predict2.5-IDM 증강 재학습) | 증강 전/후 성능 비교 |
 | 11-12 | 최종 벤치마크 + 프로젝트 마무리 | 종합 분석 보고서 |
 
 ## 사전 요구사항
@@ -121,8 +124,29 @@ bash scripts/week5_train_act_baseline.sh
 # GR00T 파인튜닝
 bash scripts/week5_finetune_groot_omx.sh
 
-# 비교 평가
+# ACT vs GR00T 비교 평가
 python scripts/week6_eval_omx.py
+```
+
+### 5. Cosmos 평가 및 시너지 파이프라인
+
+```bash
+# Cosmos Policy LIBERO 벤치마크
+python scripts/week7_eval_cosmos_libero.py
+
+# Cosmos vs GR00T 비교 분석
+python scripts/week8_cosmos_groot_comparison.py
+
+# 통합 파이프라인 + Cosmos Predict2.5-IDM 시너지
+python scripts/week10_cross_model_analysis.py \
+    --eval-dir outputs/eval \
+    --cosmos-predict-dir outputs/cosmos_predict
+
+# 종합 벤치마킹 보고서 생성
+python scripts/week11_benchmark_report.py \
+    --eval-dir outputs/eval \
+    --synergy-dir outputs/week10_analysis \
+    --output outputs/final_report.md
 ```
 
 ## 핵심 유틸리티
