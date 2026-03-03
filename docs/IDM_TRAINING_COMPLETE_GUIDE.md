@@ -47,7 +47,49 @@
 
 ## 2. 데이터셋 준비
 
-### 2.1 원본 다운로드 (LeRobot v3, SO-100)
+### 2.0 변환 완료 데이터셋 다운로드 (권장 - 빠른 경로)
+
+이미 SO-100 → OMX 변환, 후처리, 병합, H264 변환이 완료된 데이터셋이 HuggingFace에 업로드되어 있습니다.
+**새 PC에서 시작할 때는 이 방법을 사용하세요** (섹션 2.1~2.5를 건너뛸 수 있습니다).
+
+```bash
+# 1. 다운로드 (Private repo - HuggingFace 인증 필요)
+huggingface-cli login  # 토큰 입력
+huggingface-cli download Yuseok/omx_combined_idm \
+    --repo-type dataset \
+    --local-dir datasets/omx/omx_combined
+
+# 2. 에피소드별 비디오 심링크 생성 (필수!)
+cd datasets/omx/omx_combined
+python setup_symlinks.py
+# → "Created 316 symlinks across 2 cameras" 출력 확인
+
+# 3. 검증
+python -c "
+import decord
+vr = decord.VideoReader('videos/observation.images.top/chunk-000/episode_000000.mp4')
+print(f'Frames: {len(vr)}, Shape: {vr[0].shape}')
+"
+# → Frames: 19631, Shape: (480, 640, 3)
+```
+
+> **HuggingFace repo 구조**: 6개 고유 비디오 파일(pickplace/stacking/sorting × 2카메라)만 저장되어 있고,
+> `setup_symlinks.py`가 158개 에피소드별 심링크를 생성합니다. 이렇게 하면 1.4GB만 다운로드하면 됩니다.
+
+| 항목 | 값 |
+|------|-----|
+| Repo | `Yuseok/omx_combined_idm` (Private) |
+| 크기 | 1.41GB (6 비디오 + 158 parquet + meta) |
+| 에피소드 | 158 (pickplace 50 + stacking 56 + sorting 52) |
+| 프레임 | 78,300 |
+| 포맷 | LeRobot v3, H264 코덱, 30 FPS |
+| Action/State | 6-DOF (shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper) |
+
+**이 경로를 사용하면 바로 [섹션 4. 학습 실행](#4-학습-실행)으로 이동하세요.**
+
+---
+
+### 2.1 원본 다운로드 (LeRobot v3, SO-100) - 변환부터 시작할 경우
 
 ```bash
 # HuggingFace에서 다운로드 (약 3.7GB 총)
@@ -522,19 +564,55 @@ Step 5000: 0.464 (최종)
 
 ---
 
-## 8. 새 세션에서 빠르게 시작하기
+## 8. 다른 PC / 새 세션에서 이어 시작하기
 
-### 이미 변환된 데이터가 있는 경우 (재학습만)
+### 8.1 빠른 경로: HuggingFace에서 다운로드 후 바로 학습 (권장)
+
+변환 완료된 데이터셋이 HuggingFace에 있으므로, 새 PC에서는 4단계만 수행하면 됩니다.
 
 ```bash
-cd /home/lambda/claude/GR00T-Dreams-IDM
-source .venv/bin/activate
+# ──── Step 1: 코드 준비 ────
+git clone <GR00T-Dreams-IDM repo URL>
+cd GR00T-Dreams-IDM
 
-# 5090 GPU에서 전체 모델 학습
+# ──── Step 2: 환경 설정 (Blackwell GPU인 경우) ────
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+pip install -r requirements.txt
+pip install decord  # 비디오 백엔드
+
+# 환경 검증
+python -c "
+import torch; print(f'PyTorch: {torch.__version__}')
+print(f'CUDA: {torch.version.cuda}')
+print(f'GPU: {torch.cuda.get_device_name(0)}')
+x = torch.randn(2,2,device='cuda'); print('CUDA OK')
+"
+
+# ──── Step 3: 데이터셋 다운로드 + 심링크 ────
+huggingface-cli login
+huggingface-cli download Yuseok/omx_combined_idm \
+    --repo-type dataset \
+    --local-dir ../datasets/omx/omx_combined
+
+cd ../datasets/omx/omx_combined
+python setup_symlinks.py   # 316 symlinks 생성
+cd -  # GR00T-Dreams-IDM으로 복귀
+
+# 검증
+python -c "
+import decord
+vr = decord.VideoReader('../datasets/omx/omx_combined/videos/observation.images.top/chunk-000/episode_000000.mp4')
+print(f'OK: {len(vr)} frames, {vr[0].shape}')
+"
+
+# ──── Step 4: 학습 실행 ────
+# RTX 5090 (32GB) - 전체 모델 학습
 .venv/bin/python scripts/idm_training.py \
-    --dataset-path /home/lambda/claude/datasets/omx/omx_combined \
+    --dataset-path ../datasets/omx/omx_combined \
     --data-config omx \
-    --output-dir /home/lambda/claude/idm_output_5090 \
+    --output-dir ../idm_output \
     --num-gpus 1 \
     --batch-size 16 \
     --tune-vision-tower \
@@ -545,22 +623,49 @@ source .venv/bin/activate
     --report-to tensorboard \
     --video-backend decord \
     --embodiment-tag new_embodiment
+
+# RTX 5070 (8GB) - 메모리 최적화 학습
+# --batch-size 1 --gradient-accumulation-steps 8 \
+# --gradient-checkpointing --no-tune-vision-tower \
+# --dataloader-num-workers 2
 ```
 
-### 처음부터 시작하는 경우
+### 8.2 전체 파이프라인: 원본 데이터부터 변환하는 경우
 
-1. 섹션 2.1: 데이터셋 다운로드
-2. 섹션 2.2-2.4: 변환 → 후처리 → 병합
-3. 섹션 2.5: H264 비디오 변환
-4. 섹션 4.3: 학습 실행
+SO-100 원본 데이터에서부터 변환이 필요한 경우:
 
-### Claude에게 전달할 컨텍스트
+1. **섹션 2.1**: SO-100 데이터셋 3개 다운로드 (lerobot HuggingFace)
+2. **섹션 2.2**: SO-100 → OMX kinematic 변환 (`convert_so100_to_omx.py`)
+3. **섹션 2.3**: 후처리 - scalar → array columns (`postprocess_omx_dataset.py`)
+4. **섹션 2.4**: 3개 데이터셋 병합 (`merge_omx_datasets.py`)
+5. **섹션 2.5**: AV1 → H264 비디오 변환 (ffmpeg)
+6. **섹션 4**: 학습 실행
+
+> 변환 스크립트는 `pseudo-project/scripts/`에 있습니다.
+
+### 8.3 필수 Git 저장소
+
+| 저장소 | 용도 | 핵심 파일 |
+|--------|------|-----------|
+| GR00T-Dreams-IDM | IDM 모델 학습/추론 코드 | `scripts/idm_training.py`, `gr00t/model/idm.py` |
+| pseudo-project | 변환 스크립트, 문서 | `scripts/convert_so100_to_omx.py`, `docs/` |
+
+### 8.4 HuggingFace 리소스
+
+| 리소스 | Repo ID | 접근 |
+|--------|---------|------|
+| 변환 완료 데이터셋 | `Yuseok/omx_combined_idm` | Private (인증 필요) |
+| SO-100 pickplace 원본 | `lerobot/svla_so100_pickplace` | Public |
+| SO-100 stacking 원본 | `lerobot/svla_so100_stacking` | Public |
+| SO-100 sorting 원본 | `lerobot/svla_so100_sorting` | Public |
+
+### 8.5 Claude에게 전달할 컨텍스트
 
 새 세션에서 다음과 같이 요청하세요:
 
-> `/home/lambda/claude/pseudo-project/docs/IDM_TRAINING_COMPLETE_GUIDE.md` 파일을 읽고,
-> 5090 GPU에서 IDM 모델을 재학습해줘. 데이터셋은 이미 준비되어 있고,
-> `datasets/omx/omx_combined/`에 있어.
+> `docs/IDM_TRAINING_COMPLETE_GUIDE.md` 파일을 읽어줘.
+> HuggingFace에서 `Yuseok/omx_combined_idm` 데이터셋을 다운로드하고,
+> IDM 모델을 학습해줘. GPU는 RTX 5090 32GB야.
 
 ---
 
