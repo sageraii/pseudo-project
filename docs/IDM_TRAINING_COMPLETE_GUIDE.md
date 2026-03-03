@@ -91,12 +91,26 @@ print(f'Frames: {len(vr)}, Shape: {vr[0].shape}')
 
 ### 2.1 원본 다운로드 (LeRobot v3, SO-100) - 변환부터 시작할 경우
 
+**방법 A: H264 변환 완료 버전 다운로드 (권장)**
+
+AV1→H264 변환이 완료된 버전입니다. ffmpeg 변환 없이 바로 decord로 사용 가능합니다.
+
+```bash
+huggingface-cli login  # Private repo - 인증 필요
+huggingface-cli download Yuseok/so100_h264 \
+    --repo-type dataset \
+    --local-dir datasets/so100
+```
+
+**방법 B: 공식 원본 다운로드 (AV1 코덱 → H264 변환 필요)**
+
 ```bash
 # HuggingFace에서 다운로드 (약 3.7GB 총)
 pip install huggingface_hub
 huggingface-cli download lerobot/svla_so100_pickplace --repo-type dataset --local-dir datasets/so100/svla_so100_pickplace
 huggingface-cli download lerobot/svla_so100_stacking --repo-type dataset --local-dir datasets/so100/svla_so100_stacking
 huggingface-cli download lerobot/svla_so100_sorting  --repo-type dataset --local-dir datasets/so100/svla_so100_sorting
+# ⚠️ 이 방법은 섹션 2.5의 H264 변환 단계가 추가로 필요합니다
 ```
 
 | 데이터셋 | 에피소드 | 프레임 | 태스크 |
@@ -652,12 +666,13 @@ SO-100 원본 데이터에서부터 변환이 필요한 경우:
 
 ### 8.4 HuggingFace 리소스
 
-| 리소스 | Repo ID | 접근 |
-|--------|---------|------|
-| 변환 완료 데이터셋 | `Yuseok/omx_combined_idm` | Private (인증 필요) |
-| SO-100 pickplace 원본 | `lerobot/svla_so100_pickplace` | Public |
-| SO-100 stacking 원본 | `lerobot/svla_so100_stacking` | Public |
-| SO-100 sorting 원본 | `lerobot/svla_so100_sorting` | Public |
+| 리소스 | Repo ID | 접근 | 비고 |
+|--------|---------|------|------|
+| OMX 변환 완료 데이터셋 | `Yuseok/omx_combined_idm` | Private | IDM 학습 직접 사용 |
+| SO-100 H264 변환 | `Yuseok/so100_h264` | Private | 변환 파이프라인 입력 (decord 호환) |
+| SO-100 pickplace 원본 | `lerobot/svla_so100_pickplace` | Public | AV1 코덱 (H264 변환 필요) |
+| SO-100 stacking 원본 | `lerobot/svla_so100_stacking` | Public | AV1 코덱 (H264 변환 필요) |
+| SO-100 sorting 원본 | `lerobot/svla_so100_sorting` | Public | AV1 코덱 (H264 변환 필요) |
 
 ### 8.5 Claude에게 전달할 컨텍스트
 
