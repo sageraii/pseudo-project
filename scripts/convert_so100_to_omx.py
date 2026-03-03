@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# BLAS 스레드 제한: multiprocessing과 함께 사용 시 스레드 폭발 방지
+# 반드시 numpy/scipy import 전에 설정해야 함
+import os as _os
+_os.environ.setdefault("OMP_NUM_THREADS", "1")
+_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+_os.environ.setdefault("MKL_NUM_THREADS", "1")
+_os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+del _os
+
 """
 SO-100 → OMX 데이터 변환 스크립트 (URDF FK → IK 방법 B)
 
@@ -43,6 +52,8 @@ Usage:
 
 import argparse
 import json
+import multiprocessing
+import os
 import shutil
 import sys
 import time
@@ -518,6 +529,55 @@ def convert_episode(pd, df_episode, prev_omx_q=None):
     return omx_states, omx_actions, ik_stats
 
 
+def _episode_worker(args):
+    """Multiprocessing 워커: 단일 에피소드를 numpy 배열로 변환.
+
+    에피소드 내부에서는 warm-start가 유지됩니다.
+    에피소드 간 warm-start는 포기하지만, 실제 품질 차이는 미미합니다
+    (에피소드 시작 시 로봇이 홈 포지션에 있으므로).
+    """
+    ep_idx, states_deg, actions_deg, meta_arrays = args
+    n_frames = len(states_deg)
+
+    omx_states = np.zeros((n_frames, 6))
+    omx_actions = np.zeros((n_frames, 6))
+    ik_stats = {"total": n_frames, "converged": 0, "pos_errors_mm": []}
+    current_guess = np.zeros(5)
+
+    for t in range(n_frames):
+        # --- state 변환 ---
+        arm_rad, grip_norm = so100_deg_to_urdf_rad(states_deg[t])
+        T_target = forward_kinematics(SO100_CHAIN, arm_rad, SO100_EE_OFFSET)
+
+        omx_q, cost, success = omx_ik(T_target, initial_guess=current_guess)
+
+        T_check = forward_kinematics(OMX_CHAIN, omx_q, OMX_EE_OFFSET)
+        pos_err = np.linalg.norm(T_check[:3, 3] - T_target[:3, 3])
+        ik_stats["pos_errors_mm"].append(pos_err * 1000)
+
+        if success and pos_err < 0.01:
+            ik_stats["converged"] += 1
+            current_guess = omx_q.copy()
+
+        omx_states[t, :5] = omx_q
+        omx_states[t, 5] = omx_gripper_from_normalized(grip_norm)
+
+        # --- action 변환 ---
+        act_arm_rad, act_grip_norm = so100_deg_to_urdf_rad(actions_deg[t])
+        T_act_target = forward_kinematics(SO100_CHAIN, act_arm_rad, SO100_EE_OFFSET)
+        omx_act_q, _, _ = omx_ik(T_act_target, initial_guess=omx_q)
+
+        omx_actions[t, :5] = omx_act_q
+        omx_actions[t, 5] = omx_gripper_from_normalized(act_grip_norm)
+
+    errors = np.array(ik_stats["pos_errors_mm"])
+    ik_stats["converge_ratio"] = ik_stats["converged"] / max(n_frames, 1)
+    ik_stats["mean_error_mm"] = float(errors.mean())
+    ik_stats["max_error_mm"] = float(errors.max())
+
+    return ep_idx, omx_states, omx_actions, ik_stats, meta_arrays
+
+
 def build_omx_dataframe(pd, df_orig, omx_states, omx_actions):
     """변환된 OMX 데이터로 새 DataFrame 생성."""
     records = []
@@ -533,6 +593,18 @@ def build_omx_dataframe(pd, df_orig, omx_states, omx_actions):
                 record[meta_key] = row[meta_key]
         records.append(record)
     return pd.DataFrame(records)
+
+
+def _build_omx_dataframe_from_arrays(pd, omx_states, omx_actions, meta_arrays):
+    """numpy 배열 + 메타데이터 dict로 DataFrame 생성 (multiprocessing용)."""
+    data = {}
+    for j, name in enumerate(OMX_JOINT_NAMES):
+        data[f"state.{name}"] = omx_states[:, j]
+    for j, name in enumerate(OMX_JOINT_NAMES):
+        data[f"action.{name}"] = omx_actions[:, j]
+    for key, arr in meta_arrays.items():
+        data[key] = arr
+    return pd.DataFrame(data)
 
 
 def create_omx_metadata(so100_meta_dir, output_meta_dir, conversion_stats):
@@ -597,7 +669,7 @@ def compute_omx_stats(all_states, all_actions):
 
 
 def convert_dataset(args):
-    """SO-100 데이터셋 전체를 OMX로 변환."""
+    """SO-100 데이터셋 전체를 OMX로 변환 (multiprocessing 지원)."""
     pd = _require_pandas()
 
     so100_dir = Path(args.so100_dataset)
@@ -605,6 +677,8 @@ def convert_dataset(args):
     data_dir = so100_dir / "data"
     meta_dir = so100_dir / "meta"
     video_dir = so100_dir / "videos"
+
+    n_workers = getattr(args, "workers", 1) or 1
 
     if not data_dir.exists():
         print(f"[ERROR] 데이터 디렉토리 없음: {data_dir}")
@@ -618,6 +692,7 @@ def convert_dataset(args):
     print(f"입력: {so100_dir}")
     print(f"출력: {output_dir}")
     print(f"parquet 파일: {len(parquet_files)}개")
+    print(f"워커: {n_workers}개")
 
     all_dfs = [pd.read_parquet(pf) for pf in parquet_files]
     df_all = pd.concat(all_dfs, ignore_index=True)
@@ -660,49 +735,115 @@ def convert_dataset(args):
         print("\n검증 완료 (--validate-only).")
         return
 
-    # 에피소드별 변환
-    print(f"\n--- 변환 시작 ({len(episodes)} 에피소드) ---")
+    # 에피소드별 데이터 준비 (numpy 배열로 추출)
+    print(f"\n--- 변환 시작 ({len(episodes)} 에피소드, {n_workers} 워커) ---")
     output_data_dir = output_dir / "data" / "chunk-000"
     output_data_dir.mkdir(parents=True, exist_ok=True)
 
-    all_omx_states, all_omx_actions, all_converted_dfs = [], [], []
-    conversion_stats = {"episodes": {}}
-    prev_omx_q = None
-    t_start = time.time()
-
-    for ep_idx, ep in enumerate(episodes):
+    worker_args = []
+    ep_dataframes = {}  # ep_idx → df (DataFrame 재구성용)
+    for ep in episodes:
         df_ep = df_all[df_all["episode_index"] == ep].reset_index(drop=True)
-        ep_start = time.time()
-        omx_states, omx_actions, ik_stats = convert_episode(pd, df_ep, prev_omx_q)
-        ep_elapsed = time.time() - ep_start
+        ep_dataframes[int(ep)] = df_ep
 
-        prev_omx_q = omx_states[-1]
-        all_omx_states.append(omx_states)
-        all_omx_actions.append(omx_actions)
-
-        df_omx = build_omx_dataframe(pd, df_ep, omx_states, omx_actions)
-        all_converted_dfs.append(df_omx)
-
-        conversion_stats["episodes"][int(ep)] = {
-            "frames": len(df_ep),
-            "converge_ratio": ik_stats["converge_ratio"],
-            "mean_error_mm": ik_stats["mean_error_mm"],
-            "max_error_mm": ik_stats["max_error_mm"],
-            "time_sec": round(ep_elapsed, 1),
+        states_deg = np.stack(df_ep["observation.state"].values).astype(np.float64)
+        actions_deg = np.stack(df_ep["action"].values).astype(np.float64)
+        meta = {
+            "episode_index": df_ep["episode_index"].values,
+            "frame_index": df_ep["frame_index"].values,
+            "timestamp": df_ep["timestamp"].values,
+            "index": df_ep["index"].values,
+            "task_index": df_ep["task_index"].values,
         }
+        worker_args.append((int(ep), states_deg, actions_deg, meta))
 
-        fps = len(df_ep) / max(ep_elapsed, 0.01)
-        print(f"  에피소드 {ep:3d}: {len(df_ep):5d} frames, "
-              f"수렴 {ik_stats['converge_ratio']:.0%}, "
-              f"오차 {ik_stats['mean_error_mm']:.2f}mm, "
-              f"{fps:.0f} fps ({ep_elapsed:.1f}s)")
+    t_start = time.time()
+    conversion_stats = {"episodes": {}}
+    all_omx_states, all_omx_actions, all_converted_dfs = [], [], []
+    completed = 0
+
+    if n_workers > 1:
+        # --- Multiprocessing 병렬 변환 ---
+        with multiprocessing.Pool(processes=n_workers) as pool:
+            for ep_idx, omx_states, omx_actions, ik_stats, meta in pool.imap_unordered(
+                _episode_worker, worker_args
+            ):
+                completed += 1
+                n_frames = len(omx_states)
+                elapsed_so_far = time.time() - t_start
+                fps_total = sum(
+                    v["frames"] for v in conversion_stats["episodes"].values()
+                ) + n_frames
+                avg_fps = fps_total / max(elapsed_so_far, 0.01)
+
+                all_omx_states.append(omx_states)
+                all_omx_actions.append(omx_actions)
+
+                df_omx = _build_omx_dataframe_from_arrays(
+                    pd, omx_states, omx_actions, meta
+                )
+                all_converted_dfs.append((ep_idx, df_omx))
+
+                conversion_stats["episodes"][ep_idx] = {
+                    "frames": n_frames,
+                    "converge_ratio": ik_stats["converge_ratio"],
+                    "mean_error_mm": ik_stats["mean_error_mm"],
+                    "max_error_mm": ik_stats["max_error_mm"],
+                }
+
+                print(
+                    f"  [{completed:3d}/{len(episodes)}] 에피소드 {ep_idx:3d}: "
+                    f"{n_frames:5d} frames, "
+                    f"수렴 {ik_stats['converge_ratio']:.0%}, "
+                    f"오차 {ik_stats['mean_error_mm']:.2f}mm  "
+                    f"(전체 {avg_fps:.1f} fps)"
+                )
+    else:
+        # --- 단일 프로세스 순차 변환 (기존 동작) ---
+        prev_omx_q = None
+        for wa in worker_args:
+            ep_idx = wa[0]
+            df_ep = ep_dataframes[ep_idx]
+            ep_start = time.time()
+            omx_states, omx_actions, ik_stats = convert_episode(
+                pd, df_ep, prev_omx_q
+            )
+            ep_elapsed = time.time() - ep_start
+            completed += 1
+
+            prev_omx_q = omx_states[-1]
+            all_omx_states.append(omx_states)
+            all_omx_actions.append(omx_actions)
+
+            df_omx = build_omx_dataframe(pd, df_ep, omx_states, omx_actions)
+            all_converted_dfs.append((ep_idx, df_omx))
+
+            conversion_stats["episodes"][ep_idx] = {
+                "frames": len(df_ep),
+                "converge_ratio": ik_stats["converge_ratio"],
+                "mean_error_mm": ik_stats["mean_error_mm"],
+                "max_error_mm": ik_stats["max_error_mm"],
+                "time_sec": round(ep_elapsed, 1),
+            }
+
+            fps = len(df_ep) / max(ep_elapsed, 0.01)
+            print(
+                f"  [{completed:3d}/{len(episodes)}] 에피소드 {ep_idx:3d}: "
+                f"{len(df_ep):5d} frames, "
+                f"수렴 {ik_stats['converge_ratio']:.0%}, "
+                f"오차 {ik_stats['mean_error_mm']:.2f}mm, "
+                f"{fps:.0f} fps ({ep_elapsed:.1f}s)"
+            )
 
     total_elapsed = time.time() - t_start
-    print(f"\n변환 완료: {total_elapsed:.1f}초")
+    total_frames = sum(v["frames"] for v in conversion_stats["episodes"].values())
+    print(f"\n변환 완료: {total_elapsed:.1f}초 ({total_frames / max(total_elapsed, 0.01):.1f} fps)")
 
-    # 저장
+    # 에피소드 순서대로 정렬 후 저장
+    all_converted_dfs.sort(key=lambda x: x[0])
+
     print("\n--- 저장 ---")
-    df_result = pd.concat(all_converted_dfs, ignore_index=True)
+    df_result = pd.concat([df for _, df in all_converted_dfs], ignore_index=True)
     out_parquet = output_data_dir / "episode_000000.parquet"
     df_result.to_parquet(out_parquet, index=False)
     print(f"  데이터: {out_parquet} ({len(df_result)} rows)")
@@ -710,7 +851,10 @@ def convert_dataset(args):
     if video_dir.exists():
         output_video_dir = output_dir / "videos"
         if output_video_dir.exists():
-            shutil.rmtree(output_video_dir)
+            if output_video_dir.is_symlink():
+                output_video_dir.unlink()
+            else:
+                shutil.rmtree(output_video_dir)
         output_video_dir.symlink_to(video_dir.resolve())
         print(f"  비디오: symlink → {video_dir.resolve()}")
 
@@ -730,6 +874,7 @@ def convert_dataset(args):
     print(f"\n=== 변환 요약 ===")
     print(f"  에피소드: {len(episodes)}, 프레임: {len(df_result)}")
     print(f"  평균 수렴률: {mean_converge:.0%}, 평균 오차: {mean_error:.2f}mm")
+    print(f"  워커: {n_workers}, 소요 시간: {total_elapsed:.1f}초")
     print(f"  출력: {output_dir}")
 
 
@@ -752,6 +897,8 @@ def main():
                         help="변환할 최대 에피소드 수 (테스트용)")
     parser.add_argument("--validate-only", action="store_true",
                         help="워크스페이스 검증만 수행")
+    parser.add_argument("--workers", type=int, default=os.cpu_count(),
+                        help=f"병렬 워커 수 (기본: CPU 코어 수 = {os.cpu_count()})")
 
     args = parser.parse_args()
 
