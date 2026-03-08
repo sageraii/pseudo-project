@@ -224,18 +224,36 @@ SO100_ZERO_OFFSET_DEG = {
 }
 
 SO100_GRIPPER_RANGE_DEG = (-7.3, 58.7)
+
+# SO-101 LeRobot calibrated data: already zero-centered, no offset needed
+SO101_ZERO_OFFSET_DEG = {
+    "shoulder_pan": 0.0,
+    "shoulder_lift": 0.0,
+    "elbow_flex": 0.0,
+    "wrist_flex": 0.0,
+    "wrist_roll": 0.0,
+}
+SO101_GRIPPER_RANGE_DEG = (1.1, 66.3)
+
 OMX_GRIPPER_RANGE_RAD = (-0.5, 1.0)
 
+# Module-level active config (set by --so101 flag, inherited by forked workers)
+_ACTIVE_OFFSETS = SO100_ZERO_OFFSET_DEG
+_ACTIVE_GRIPPER_RANGE = SO100_GRIPPER_RANGE_DEG
 
-def so100_deg_to_urdf_rad(joint_values_deg, offsets=SO100_ZERO_OFFSET_DEG):
-    """SO-100 서보 degrees → URDF joint radians.
+
+def so100_deg_to_urdf_rad(joint_values_deg, offsets=None):
+    """SO-100/SO-101 서보 degrees → URDF joint radians.
 
     Args:
         joint_values_deg: [6] 배열 (5 arm joints + 1 gripper, degrees)
+        offsets: 캘리브레이션 오프셋 dict. None이면 _ACTIVE_OFFSETS 사용.
 
     Returns:
         arm_rad: [5] ndarray, gripper_normalized: float [0,1]
     """
+    if offsets is None:
+        offsets = _ACTIVE_OFFSETS
     arm_deg = joint_values_deg[:5]
     gripper_deg = joint_values_deg[5]
 
@@ -243,8 +261,12 @@ def so100_deg_to_urdf_rad(joint_values_deg, offsets=SO100_ZERO_OFFSET_DEG):
     for i, name in enumerate(SO100_JOINT_NAMES):
         arm_rad[i] = np.deg2rad(arm_deg[i] - offsets[name])
 
-    g_min, g_max = SO100_GRIPPER_RANGE_DEG
-    gripper_normalized = np.clip((gripper_deg - g_min) / (g_max - g_min), 0, 1)
+    g_min, g_max = _ACTIVE_GRIPPER_RANGE
+    g_range = g_max - g_min
+    if abs(g_range) < 1e-8:
+        gripper_normalized = 0.5
+    else:
+        gripper_normalized = np.clip((gripper_deg - g_min) / g_range, 0, 1)
 
     return arm_rad, gripper_normalized
 
@@ -669,7 +691,16 @@ def compute_omx_stats(all_states, all_actions):
 
 
 def convert_dataset(args):
-    """SO-100 데이터셋 전체를 OMX로 변환 (multiprocessing 지원)."""
+    """SO-100/SO-101 데이터셋 전체를 OMX로 변환 (multiprocessing 지원)."""
+    global _ACTIVE_OFFSETS, _ACTIVE_GRIPPER_RANGE
+    if getattr(args, "so101", False):
+        _ACTIVE_OFFSETS = SO101_ZERO_OFFSET_DEG
+        _ACTIVE_GRIPPER_RANGE = SO101_GRIPPER_RANGE_DEG
+        print("[SO-101 모드] Zero offsets, gripper range (1.1, 66.3)°")
+    else:
+        _ACTIVE_OFFSETS = SO100_ZERO_OFFSET_DEG
+        _ACTIVE_GRIPPER_RANGE = SO100_GRIPPER_RANGE_DEG
+
     pd = _require_pandas()
 
     so100_dir = Path(args.so100_dataset)
@@ -899,6 +930,8 @@ def main():
                         help="워크스페이스 검증만 수행")
     parser.add_argument("--workers", type=int, default=os.cpu_count(),
                         help=f"병렬 워커 수 (기본: CPU 코어 수 = {os.cpu_count()})")
+    parser.add_argument("--so101", action="store_true",
+                        help="SO-101 calibrated 데이터 사용 (zero offsets)")
 
     args = parser.parse_args()
 
