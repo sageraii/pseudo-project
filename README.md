@@ -189,14 +189,25 @@ GR00T N1.6 파인튜닝을 위한 OMX 모달리티 설정입니다. `launch_fine
 | action | `joint1`~`gripper` | 6차원, action_horizon=16 |
 | language | `annotation.human.action.task_description` | 자연어 작업 지시 |
 
-## Cosmos Predict2.5 + IDM 시너지 파이프라인
+## Cosmos 데이터 증강 파이프라인
 
-Cosmos Predict2.5 세계 모델이 생성한 합성 비디오를 GR00T IDM(Inverse Dynamics Model)으로 pseudo labeling하여 VLA 학습 데이터를 증강하는 핵심 파이프라인입니다.
+### 방안 A: Cosmos Predict2.5 + IDM (OMX 로봇 데이터 필요)
+
+> **실증 결과**: Post-training 없이는 새 로봇에 사용 불가 확인됨.
+> 실제 OMX 로봇 데이터 50~100 에피소드 선수집 필요. (실험 로그: `.omc/research/`)
 
 ```
-Phase 1: OMX 시연 (50회) → GR00T VLA 파인튜닝 + FK 변환 → Cosmos 후훈련
-Phase 2: action 변형 → Cosmos 합성 비디오 (수백 회) → IDM pseudo labeling → 품질 필터
-Phase 3: 실제 + 합성 데이터 → GR00T VLA 재학습 → 성능 향상
+Phase 1: OMX 실제 시연 (50+회) → VLA 파인튜닝 + Cosmos Base 후훈련
+Phase 2: 텍스트 프롬프트 → Cosmos 합성 비디오 → IDM pseudo label → 품질 필터
+Phase 3: 실제 + 합성 → VLA 재학습
+```
+
+### 방안 B: Cosmos Transfer 2.5 시각 증강 (기존 데이터 활용 가능)
+
+기존 시연 영상의 **시각적 외관만 변환** (조명, 재질, 배경), action/state 원본 유지.
+
+```
+원본 비디오 + seg/edge/depth → Cosmos Transfer 2B → 외관 변환 → 자동 검수 → 혼합 학습
 ```
 
 **데이터 변환 흐름**:
@@ -220,5 +231,7 @@ gripper <-> gripper
 
 ## 참고 문서
 
-- [Project.md](Project.md) - 상세 프로젝트 명세 (모델 분석, 아키텍처, 시너지 전략)
-- [SCRIPTS.md](SCRIPTS.md) - 스크립트별 기술 문서 (의존성, 설계 결정, 사용법)
+- [Project.md](Project.md) - 모델 분석 및 전략 (§1-7: 모델 정의, 비교, 시너지, 결론)
+- [CURRICULUM.md](CURRICULUM.md) - 12주 실행 로드맵 (§8-10: 커리큘럼, 팁, 예상 결과)
+- [PIPELINE.md](PIPELINE.md) - IDM/Cosmos 데이터 파이프라인 (§11: GR00T-IDM 연계, Cosmos v4, Transfer 2.5)
+- [SCRIPTS.md](SCRIPTS.md) - 스크립트 기술 문서 (의존성, 설계 결정, 사용법)

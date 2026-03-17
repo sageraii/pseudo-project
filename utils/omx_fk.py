@@ -7,7 +7,9 @@ Cosmos Predict2.5 Action-Conditioned 모델의 입력 데이터 변환에 사용
 Cosmos가 요구하는 EE 포즈 형식:
     state: [x, y, z, roll, pitch, yaw]  (6-dim)
     continuous_gripper_state: [0.0 ~ 1.0]  (1-dim)
-    action: 연속 프레임 간 상대 변위 (7-dim)
+    action: 이전 프레임 EE local frame 기준 상대 변위 (7-dim)
+        [rel_xyz(3), rel_rpy(3), gripper(1)]
+        위치/회전: prev_rotm.T @ (curr - prev), gripper: curr 값
 
 URDF 소스:
     OMX-F: open_manipulator_description/urdf/omx_f/omx_f.urdf
@@ -86,13 +88,37 @@ def _translation(x: float, y: float, z: float) -> np.ndarray:
 _ROT_FN = {"X": _rot_x, "Y": _rot_y, "Z": _rot_z}
 
 
+def _rpy_to_rotation_matrix(rpy) -> np.ndarray:
+    """Roll-Pitch-Yaw → 3x3 회전 행렬 변환 (ZYX convention).
+
+    Cosmos Predict2.5의 euler2rotm과 동일한 구현.
+    R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
+
+    참조: cosmos_predict2/_src/predict2/action/datasets/dataset_utils.py
+    """
+    roll, pitch, yaw = float(rpy[0]), float(rpy[1]), float(rpy[2])
+
+    cr, sr = np.cos(roll), np.sin(roll)
+    Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+
+    return Rz @ Ry @ Rx
+
+
 def _rotation_matrix_to_rpy(R: np.ndarray) -> tuple[float, float, float]:
     """3x3 회전 행렬 → Roll-Pitch-Yaw (XYZ 오일러 각도) 변환.
 
+    Cosmos Predict2.5의 rotm2euler과 동일한 구현 (ZYX convention).
+    R = Rz * Ry * Rx → (roll, pitch, yaw) 추출
+
     Returns:
-        (roll, pitch, yaw) in radians
+        (roll, pitch, yaw) in radians, 범위 (-pi, pi]
     """
-    # pitch (Y축)
     sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
     singular = sy < 1e-6
 
@@ -104,6 +130,13 @@ def _rotation_matrix_to_rpy(R: np.ndarray) -> tuple[float, float, float]:
         roll = np.arctan2(-R[1, 2], R[1, 1])
         pitch = np.arctan2(-R[2, 0], sy)
         yaw = 0.0
+
+    # Cosmos convention: (-pi, pi] 범위로 래핑
+    for angle in [roll, pitch, yaw]:
+        while angle > np.pi:
+            angle -= 2 * np.pi
+        while angle <= -np.pi:
+            angle += 2 * np.pi
 
     return (roll, pitch, yaw)
 
@@ -207,10 +240,14 @@ class OMXForwardKinematics:
         gripper_t: float = 0.0,
         gripper_t1: float = 0.0,
     ) -> np.ndarray:
-        """연속 두 프레임의 관절 위치 → Cosmos action (상대 변위) 계산.
+        """연속 두 프레임의 관절 위치 → Cosmos action (local frame 상대 변위) 계산.
 
-        Cosmos action = EE_pose(t+1) - EE_pose(t) (7-dim)
-            [delta_x, delta_y, delta_z, delta_roll, delta_pitch, delta_yaw, delta_gripper]
+        Cosmos action-conditioned 모델의 _get_actions()와 동일한 방식:
+            - 위치: 이전 프레임 EE 좌표계에서의 상대 변위
+            - 회전: 이전 프레임 기준 상대 회전의 Euler 표현
+            - 그리퍼: 현재 프레임의 그리퍼 값
+
+        참조: cosmos_predict2/action_conditioned.py:82-103 (_get_actions)
 
         Args:
             joint_positions_t: t 시점 관절 각도 (5-dim)
@@ -219,15 +256,29 @@ class OMXForwardKinematics:
             gripper_t1: t+1 시점 그리퍼 값
 
         Returns:
-            np.ndarray: 7-dim 상대 변위 action
+            np.ndarray: 7-dim action
+                [rel_x, rel_y, rel_z, rel_roll, rel_pitch, rel_yaw, gripper]
         """
-        state_t = self.to_cosmos_state(joint_positions_t, gripper_t)
-        state_t1 = self.to_cosmos_state(joint_positions_t1, gripper_t1)
+        ee_t = self.compute(joint_positions_t)
+        ee_t1 = self.compute(joint_positions_t1)
 
-        delta_state = np.array(state_t1["state"]) - np.array(state_t["state"])
-        delta_gripper = state_t1["continuous_gripper_state"] - state_t["continuous_gripper_state"]
+        prev_xyz = np.array(ee_t["position"])
+        prev_rpy = np.array(ee_t["rpy"])
+        curr_xyz = np.array(ee_t1["position"])
+        curr_rpy = np.array(ee_t1["rpy"])
 
-        return np.append(delta_state, delta_gripper)
+        # Local frame 상대 변위 (Cosmos convention)
+        prev_rotm = _rpy_to_rotation_matrix(prev_rpy)
+        curr_rotm = _rpy_to_rotation_matrix(curr_rpy)
+
+        rel_xyz = prev_rotm.T @ (curr_xyz - prev_xyz)
+        rel_rotm = prev_rotm.T @ curr_rotm
+        rel_rpy = np.array(_rotation_matrix_to_rpy(rel_rotm))
+
+        # Cosmos는 gripper_t1 값을 그대로 사용 (delta가 아님)
+        curr_gripper = float(gripper_t1)
+
+        return np.concatenate([rel_xyz, rel_rpy, [curr_gripper]])
 
     def batch_to_cosmos_states(
         self,
@@ -244,7 +295,7 @@ class OMXForwardKinematics:
             dict with:
                 "states": (T, 6) EE 포즈 시퀀스
                 "continuous_gripper_states": (T,) 그리퍼 시퀀스
-                "actions": (T-1, 7) 상대 변위 action 시퀀스
+                "actions": (T-1, 7) local frame 상대 action 시퀀스
         """
         joint_trajectory = np.asarray(joint_trajectory)
         gripper_trajectory = np.asarray(gripper_trajectory)
