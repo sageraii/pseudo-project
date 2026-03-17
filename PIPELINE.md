@@ -227,11 +227,26 @@ Cosmos Transfer 2.5 2B (edge/seg/depth/blur)
 - 물체 shape, 로봇 geometry, object identity 변경 금지
 - 자동 검수 통과본만 사용, 통과율 낮으면 대량 생성 금지
 
-**미확인 사항 (실측 필요):**
+**실측 결과 (2025-03-18):**
+
+> **RTX 5090 (32GB)에서 OOM — 실행 불가 확인됨.**
+> 모델 로딩만으로 ~30.8GB 소진 (base DiT + ControlNet + VAE + Reason1-7B).
+> 텍스트 인코더(Reason1-7B, ~15GB) GPU 로드 시점에서 OOM 발생.
+> 공식 요구 VRAM: **65.4 GB** (720p, 93 frames 기준).
+
+**사용 가능 GPU 사양:**
+
+| GPU | VRAM | Transfer 2B | 비고 |
+|-----|:---:|:---:|------|
+| RTX 5090 | 32 GB | **X** (OOM) | 모델 로딩만 ~31GB |
+| RTX A6000 / L40S | 48 GB | **가능** | Workstation / DC급 |
+| A100 | 80 GB | **가능** | 클라우드 |
+| H100+ | 94+ GB | **가능** | 공식 벤치마크 제공 |
+
+**미확인 사항 (48GB+ GPU 확보 후):**
 
 | 항목 | 우려 | 확인 방법 |
 |------|------|----------|
-| Transfer 2B VRAM | ControlNet 추가로 28~32GB 예상, OOM 위험 | SO-100 clip 1개 실측 |
 | SO-100 로봇 구조 보존 | 학습 분포 밖 로봇에 대한 품질 미지수 | edge + seg 제어 테스트 |
 | 증강 유효성 | 시각 증강이 실제 정책 성능을 개선하는지 | baseline 대비 비교 실험 |
 
