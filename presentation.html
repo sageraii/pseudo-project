@@ -1,0 +1,1571 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVIDIA 로봇 파운데이션 모델</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reset.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css">
+<style>
+  :root {
+    --c-ok:      #2E7D32;
+    --c-fail:    #C62828;
+    --c-warn:    #E65100;
+    --c-dim:     #9E9E9E;
+    --c-fg:      #2D3436;
+    --c-bg:      #FAFBFC;
+    --c-surface: #FFFFFF;
+    --c-glass:   rgba(0,0,0,0.02);
+    --c-border:  rgba(0,0,0,0.08);
+    --c-accent:  #00897B;
+    --font-main: 'Noto Sans KR', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  /* ── Base ─────────────────────────────────────────── */
+  .reveal {
+    font-family: var(--font-main);
+    font-size: 24px;
+    color: var(--c-fg);
+    background: var(--c-bg);
+    line-height: 1.6;
+  }
+
+  .reveal .slides {
+    background: linear-gradient(180deg, #FAFBFC 0%, #F0F4F8 100%);
+  }
+
+  .reveal .slides section {
+    text-align: left;
+    padding: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .reveal .slides section > * {
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* ── Headings ─────────────────────────────────────── */
+  .reveal h1 {
+    font-family: var(--font-main);
+    font-weight: 900;
+    font-size: 1.5em;
+    line-height: 1.15;
+    color: #1a1a2e;
+    margin-bottom: 0.4em;
+    text-shadow: none;
+  }
+
+  .reveal h2 {
+    font-family: var(--font-main);
+    font-weight: 700;
+    font-size: 0.95em;
+    color: var(--c-accent);
+    text-transform: none;
+    letter-spacing: 0.02em;
+    margin-bottom: 0.6em;
+    border-bottom: none;
+    padding-bottom: 0;
+    position: relative;
+  }
+  .reveal h2::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 0;
+    width: 40px;
+    height: 2px;
+    background: var(--c-accent);
+  }
+
+  .reveal h3 {
+    font-family: var(--font-main);
+    font-weight: 500;
+    font-size: 0.72em;
+    color: #607D8B;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 0.4em;
+  }
+
+  .reveal p, .reveal li {
+    font-size: 0.6em;
+    line-height: 1.7;
+    color: var(--c-fg);
+    font-weight: 400;
+  }
+
+  .reveal ul, .reveal ol { margin-left: 1.2em; }
+  .reveal li { margin-bottom: 0.24em; }
+
+  .reveal strong {
+    color: #1a1a2e;
+    font-weight: 700;
+  }
+
+  /* ── Slide label ──────────────────────────────────── */
+  .slide-label {
+    font-size: 0.36em;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--c-accent);
+    margin-bottom: 0.5em;
+    display: block;
+  }
+
+  /* ── Badges ───────────────────────────────────────── */
+  .badge {
+    display: inline-block;
+    padding: 0.12em 0.7em;
+    border-radius: 20px;
+    font-family: var(--font-mono);
+    font-size: 0.5em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    line-height: 1.65;
+  }
+  .badge-ok {
+    background: #E8F5E9;
+    color: #2E7D32;
+    border: 1px solid #A5D6A7;
+  }
+  .badge-fail {
+    background: #FFEBEE;
+    color: #C62828;
+    border: 1px solid #EF9A9A;
+  }
+  .badge-warn {
+    background: #FFF3E0;
+    color: #E65100;
+    border: 1px solid #FFCC80;
+  }
+  .badge-dim {
+    background: #F5F5F5;
+    color: #757575;
+    border: 1px solid #E0E0E0;
+  }
+
+  /* ── Tables ───────────────────────────────────────── */
+  .reveal table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.5em;
+    margin: 0.5em 0;
+    background: #FFFFFF;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .reveal table th {
+    background: #F5F5F5;
+    color: #37474F;
+    font-weight: 600;
+    padding: 0.45em 0.7em;
+    border-bottom: 2px solid #E0E0E0;
+    text-align: left;
+    white-space: nowrap;
+    font-size: 0.96em;
+    letter-spacing: 0.03em;
+  }
+  .reveal table td {
+    padding: 0.32em 0.7em;
+    border-bottom: 1px solid #F0F0F0;
+    color: #2D3436;
+    vertical-align: middle;
+  }
+  .reveal table tbody tr:nth-child(even) td {
+    background: #FAFAFA;
+  }
+  .reveal table tr:last-child td { border-bottom: none; }
+  .reveal table tr:hover td { background: #F5F5F5; }
+  .cell-ok   { color: #2E7D32 !important; font-weight: 700; }
+  .cell-fail { color: #C62828 !important; font-weight: 700; }
+  .cell-warn { color: #E65100 !important; font-weight: 700; }
+
+  /* ── Two column ───────────────────────────────────── */
+  .cols {
+    display: flex;
+    gap: 1.4rem;
+    align-items: flex-start;
+  }
+  .col   { flex: 1; }
+  .col-4 { flex: 0 0 40%; }
+  .col-6 { flex: 0 0 56%; }
+
+  /* ── Card ─────────────────────────────────────────── */
+  .card {
+    background: #FFFFFF;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 12px;
+    padding: 0.8em 1.1em;
+    margin-bottom: 0.5em;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .card-ok   { border-left: 3px solid #2E7D32; }
+  .card-fail { border-left: 3px solid #C62828; }
+  .card-warn { border-left: 3px solid #E65100; }
+  .card-dim  { border-left: 3px solid #CFD8DC; }
+  .card p, .card li { font-size: 0.57em; margin: 0.15em 0; }
+  .card h4 {
+    font-size: 0.6em;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin: 0 0 0.24em 0;
+    letter-spacing: 0.01em;
+  }
+
+  /* ── Number highlight ─────────────────────────────── */
+  .num {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 1.08em;
+    color: var(--c-accent);
+  }
+  .num-fail { color: #C62828; }
+  .num-warn { color: #E65100; }
+
+  /* ── Stat block ───────────────────────────────────── */
+  .stat-row {
+    display: flex;
+    gap: 0.9rem;
+    margin-bottom: 0.65em;
+  }
+  .stat-box {
+    flex: 1;
+    background: #FFFFFF;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 8px;
+    padding: 0.55em 0.8em;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .stat-val {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 1em;
+    display: block;
+  }
+  .stat-label {
+    font-size: 0.37em;
+    color: #78909C;
+    display: block;
+    margin-top: 0.2em;
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+  }
+
+  /* ── Progress bar ─────────────────────────────────── */
+  .progress-track {
+    background: #ECEFF1;
+    border: 1px solid #CFD8DC;
+    border-radius: 6px;
+    height: 14px;
+    margin: 0.25em 0 0.1em;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 6px;
+    transition: width 0.7s ease;
+  }
+  .progress-label {
+    font-family: var(--font-mono);
+    font-size: 0.44em;
+    color: #78909C;
+    margin-bottom: 0.35em;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* ── VRAM bar chart ───────────────────────────────── */
+  .vram-chart { margin: 0.4em 0; }
+  .vram-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.45em;
+    gap: 0.55em;
+  }
+  .vram-label {
+    font-size: 0.46em;
+    color: #546E7A;
+    min-width: 9.5em;
+    flex-shrink: 0;
+  }
+  .vram-track {
+    flex: 1;
+    background: #ECEFF1;
+    border: 1px solid #CFD8DC;
+    border-radius: 4px;
+    height: 22px;
+    position: relative;
+    overflow: visible;
+  }
+  .vram-fill {
+    height: 100%;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding-left: 0.4em;
+    position: relative;
+    transform-origin: left center;
+    animation: barGrow 0.7s ease-out both;
+  }
+  @keyframes barGrow {
+    from { transform: scaleX(0); opacity: 0; }
+    to   { transform: scaleX(1); opacity: 1; }
+  }
+  .vram-val {
+    font-family: var(--font-mono);
+    font-size: 0.41em;
+    font-weight: 600;
+    color: #FFFFFF;
+    white-space: nowrap;
+    margin-left: 0.3em;
+  }
+  .vram-limit {
+    position: absolute;
+    top: -5px;
+    bottom: -5px;
+    border-left: 2px dashed #C62828;
+    z-index: 10;
+  }
+  .vram-limit-label {
+    position: absolute;
+    top: -20px;
+    font-size: 0.32em;
+    color: #C62828;
+    white-space: nowrap;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+  }
+  .vram-official {
+    border: none;
+    border-top: 2px dashed rgba(230,81,0,0.5);
+    background: none;
+    height: 2px;
+    top: 50%;
+    border-radius: 0;
+  }
+
+  /* ── Circular dependency diagram ─────────────────── */
+  .circ-dep {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3em;
+    padding: 0.5em 0.6em;
+  }
+  .circ-node {
+    background: #FFFFFF;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 8px;
+    padding: 0.35em 0.9em;
+    font-size: 0.48em;
+    text-align: center;
+    max-width: 18em;
+    line-height: 1.45;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .circ-node-fail {
+    border-color: #EF9A9A;
+    color: #C62828;
+  }
+  .circ-arrow {
+    font-size: 0.62em;
+    color: #C62828;
+    font-weight: 700;
+  }
+  .circ-arrow-ok { color: #2E7D32; }
+
+  /* ── Flow diagram ─────────────────────────────────── */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1em;
+  }
+  .flow-step {
+    display: flex;
+    align-items: center;
+    gap: 0.55em;
+  }
+  .flow-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .flow-dot-ok   { background: #2E7D32; }
+  .flow-dot-fail { background: #C62828; }
+  .flow-dot-dim  { background: #CFD8DC; }
+  .flow-dot-warn { background: #E65100; }
+  .flow-line {
+    font-size: 0.54em;
+    color: var(--c-fg);
+    flex: 1;
+  }
+  .flow-connector {
+    width: 8px;
+    display: flex;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .flow-connector-inner {
+    width: 1px;
+    height: 10px;
+    background: #CFD8DC;
+  }
+
+  /* ── Horizontal timeline ──────────────────────────── */
+  .timeline {
+    display: flex;
+    gap: 0;
+    align-items: stretch;
+    margin: 0.6em 0 0.4em;
+  }
+  .tl-phase {
+    flex: 1;
+    position: relative;
+    padding: 0.55em 0.7em;
+    background: #FFFFFF;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 10px;
+    margin: 0 0.2em;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .tl-phase-ok   { border-top: 3px solid #2E7D32; }
+  .tl-phase-warn { border-top: 3px solid #E65100; }
+  .tl-phase-dim  { border-top: 3px solid #CFD8DC; }
+  .tl-week {
+    font-family: var(--font-mono);
+    font-size: 0.38em;
+    color: #00897B;
+    display: block;
+    margin-bottom: 0.3em;
+    letter-spacing: 0.06em;
+  }
+  .tl-week-warn { color: #E65100; }
+  .tl-week-dim  { color: #B0BEC5; }
+  .tl-title {
+    font-size: 0.52em;
+    font-weight: 700;
+    color: #1a1a2e;
+    display: block;
+    margin-bottom: 0.25em;
+    line-height: 1.3;
+  }
+  .tl-desc {
+    font-size: 0.44em;
+    color: #607D8B;
+    line-height: 1.5;
+  }
+
+  /* ── Title slide ──────────────────────────────────── */
+  .title-sub {
+    font-size: 0.5em;
+    color: #607D8B;
+    font-weight: 300;
+    margin-top: 0.4em;
+    line-height: 1.7;
+  }
+  .title-accent-bar {
+    width: 3.5em;
+    height: 2px;
+    background: linear-gradient(90deg, var(--c-accent), rgba(0,137,123,0));
+    margin-bottom: 1.1em;
+  }
+
+  /* ── Code inline ──────────────────────────────────── */
+  .reveal code {
+    font-family: var(--font-mono);
+    font-size: 0.84em;
+    background: #F1F3F4;
+    padding: 0.1em 0.32em;
+    border-radius: 4px;
+    color: #0277BD;
+  }
+
+  /* ── Section divider ──────────────────────────────── */
+  .section-divider {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    height: 100%;
+  }
+  .section-number {
+    font-family: var(--font-mono);
+    font-size: 3em;
+    font-weight: 700;
+    color: rgba(0,137,123,0.1);
+    line-height: 1;
+    margin-bottom: 0.1em;
+  }
+
+  /* ── Strikethrough ────────────────────────────────── */
+  .strike { text-decoration: line-through; color: #BDBDBD; }
+
+  /* ── Utilities ────────────────────────────────────── */
+  .vcenter { display: flex; flex-direction: column; justify-content: center; height: 100%; }
+  .small  { font-size: 0.53em !important; }
+  .xsmall { font-size: 0.42em !important; color: #78909C; }
+
+  /* ── Reveal overrides ─────────────────────────────── */
+  .reveal .slide-number {
+    font-family: var(--font-mono);
+    font-size: 0.48em;
+    color: #90A4AE;
+    background: transparent;
+  }
+  .reveal .progress { background: rgba(0,137,123,0.1); height: 2px; }
+  .reveal .progress span { background: var(--c-accent); }
+
+  /* ── Lesson items ─────────────────────────────────── */
+  .lesson-item {
+    display: flex;
+    gap: 0.75em;
+    align-items: flex-start;
+    margin-bottom: 0.42em;
+  }
+  .lesson-num {
+    font-family: var(--font-mono);
+    font-size: 0.5em;
+    font-weight: 700;
+    color: rgba(0,137,123,0.55);
+    min-width: 1.5em;
+    padding-top: 0.12em;
+    flex-shrink: 0;
+  }
+  .lesson-text {
+    font-size: 0.56em;
+    line-height: 1.6;
+    color: var(--c-fg);
+  }
+  .lesson-text strong { color: #1a1a2e; }
+
+  /* ── Role tags ────────────────────────────────────── */
+  .role-tag {
+    display: inline-block;
+    font-size: 0.43em;
+    font-family: var(--font-mono);
+    padding: 0.14em 0.55em;
+    border-radius: 20px;
+    margin-left: 0.28em;
+    vertical-align: middle;
+  }
+  .role-brain { background: #E8F5E9;  color: #2E7D32; border: 1px solid #A5D6A7; }
+  .role-world { background: #E3F2FD;  color: #1565C0; border: 1px solid #90CAF9; }
+  .role-obs   { background: #FFF3E0;  color: #E65100; border: 1px solid #FFCC80; }
+  .role-ref   { background: #F5F5F5;  color: #616161; border: 1px solid #E0E0E0; }
+  .role-base  { background: #F3E5F5;  color: #6A1B9A; border: 1px solid #CE93D8; }
+
+  /* ── Next step items (simplified for slide 18) ────── */
+  .next-simple-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+    margin-top: 0.6em;
+  }
+  .next-simple-item {
+    background: #FFFFFF;
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 10px;
+    padding: 0.7em 1em;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    font-size: 0.58em;
+    line-height: 1.6;
+    color: var(--c-fg);
+    border-left: 4px solid #CFD8DC;
+  }
+  .next-simple-item.now  { border-left-color: #2E7D32; }
+  .next-simple-item.short { border-left-color: #E65100; }
+  .next-simple-item.mid  { border-left-color: #1565C0; }
+  .next-simple-item.long { border-left-color: #6A1B9A; }
+  .next-tag {
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    font-weight: 700;
+    margin-right: 0.45em;
+  }
+  .next-tag.now   { color: #2E7D32; }
+  .next-tag.short { color: #E65100; }
+  .next-tag.mid   { color: #1565C0; }
+  .next-tag.long  { color: #6A1B9A; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ============================================================
+     SLIDE 1 — Title
+     ============================================================ -->
+<section>
+  <div class="vcenter" style="height:100%;">
+    <div class="title-accent-bar"></div>
+    <h1>NVIDIA 로봇 파운데이션 모델</h1>
+    <p class="title-sub">
+      ROBOTIS OMX 6-DOF 매니퓰레이터 기반 실증 분석<br>
+      GR00T N1.6 &middot; Cosmos Predict2.5 &middot; Cosmos Transfer2.5 &middot; SAM3 &middot; IDM v3
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 2 — 왜 이 프로젝트인가 (문제 정의)
+     ============================================================ -->
+<section>
+  <span class="slide-label">문제 정의</span>
+  <h2>왜 이 프로젝트인가</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-fail">
+        <h4>핵심 문제</h4>
+        <p>로봇 정책 학습은 <strong>대규모 시연 데이터</strong>를 필요로 하지만, 실제 로봇 시연은 시간·비용 집약적이다.</p>
+        <p style="margin-top:0.35em;">Cosmos Policy는 50개 시연으로 SOTA(98.5%)를 달성했지만, 그 모델을 <em>새 로봇</em>에 적응시키는 것 자체가 문제다.</p>
+      </div>
+
+      <div class="card card-ok">
+        <h4>핵심 질문</h4>
+        <p><strong>"50회 시연만으로 수백~수천 회 학습 효과를 낼 수 있는가?"</strong></p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-dim">
+        <h4>접근법: 합성 데이터 증강 파이프라인</h4>
+        <div class="flow" style="margin-top:0.3em;">
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line">실제 시연 50+ 회 수집</span>
+          </div>
+          <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line"><strong>Cosmos Predict</strong> (세계 모델) &rarr; 합성 비디오 생성</span>
+          </div>
+          <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line"><strong>GR00T IDM</strong> (관찰자) &rarr; pseudo action label</span>
+          </div>
+          <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line"><strong>GR00T N1.6 VLA</strong> (두뇌) &rarr; 파인튜닝</span>
+          </div>
+        </div>
+      </div>
+      <p class="xsmall" style="margin-top:0.3em;">* 이것이 "이론"이다. 실제는 다음 슬라이드에서 전개된다.</p>
+    </div>
+  </div>
+
+  <aside class="notes">
+    프로젝트의 핵심 동기: 로봇 데이터 수집 비용 문제. 사람이 직접 로봇을 조작해서 데이터를 모으는 것은 매우 느리고 비싸다. Cosmos Policy가 50개 에피소드로 LIBERO 98.5%를 달성한 것은 인상적이지만, 그 후훈련에도 8x H100이 필요하다. 우리의 목표는 RTX 5090 단일 GPU로 OMX 로봇에 맞는 파이프라인을 구축하는 것이다. 세계 모델로 합성 비디오를 만들고, IDM으로 행동을 역추정해서 레이블을 자동 생성하는 접근법이 이론적으로 매력적이다. 이 발표는 프로젝트의 배경, 사전 조사 결과, 그리고 실행 전략을 공유한다.
+  </aside>
+</section>
+
+<!-- ============================================================
+     SLIDE 3 — 프로젝트 개요 및 환경
+     ============================================================ -->
+<section>
+  <span class="slide-label">프로젝트 개요</span>
+  <h2>프로젝트 개요 및 환경</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-ok">
+        <h4>최종 목표</h4>
+        <p>OMX IDM 품질 향상 &rarr; pseudo-label 생성 &rarr; GR00T N1.6 VLA 파인튜닝 데이터셋 구축</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>하드웨어</h4>
+        <p><strong>GPU</strong>: NVIDIA RTX 5090 (Blackwell, 32GB VRAM)</p>
+        <p><strong>로봇</strong>: ROBOTIS OMX-F (5-DOF + gripper, reach 500mm, 6 관절)</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-warn">
+        <h4>현재 데이터 현황 &mdash; 중요</h4>
+        <p>보유: <strong>SO-100 / SO-101</strong> LeRobot 시연 영상<br>
+        <span class="badge badge-ok">558 episodes</span> <span class="badge badge-ok">257K frames</span></p>
+        <p style="margin-top:0.35em; color:#E65100;">
+          <strong>이 데이터는 SO-100 로봇으로 촬영한 영상이다. 실제 OMX 로봇 데이터가 아니다.</strong>
+        </p>
+        <p style="margin-top:0.22em; font-size:0.75em;">FK &rarr; IK 변환으로 관절값은 OMX 형식으로 변환했으나, 영상 자체는 SO-100 외형이다.</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>IDM v3 현재 상태</h4>
+        <p>HF: <code>Yuseok/IDM-OMX-v3-50K</code> &mdash; pseudo-label 생성 도구로 활용 예정</p>
+        <p>Normalized MAE: <span class="num">0.3551</span> (baseline 대비 <span class="num">-41.7%</span>)</p>
+      </div>
+    </div>
+  </div>
+
+  <aside class="notes">
+    중요: SO-100과 OMX의 관계를 명확히. SO-100은 ROBOTIS가 만든 로봇이지만 OMX와 외형이 다르다. 관절 구성이 유사하여 FK 변환으로 관절 각도를 OMX 좌표계로 바꿀 수 있지만, 영상 자체는 여전히 SO-100 로봇이 찍힌 것이다. 이것이 Cosmos Predict의 OOD 실패 원인 중 하나다. Cosmos가 "OMX 외형"을 본 적이 없기 때문이다. SO-101은 SO-100의 업그레이드 버전으로, FK 기준점이 다르다 (SO-100: 123/116/98/54/-52도 오프셋, SO-101: 0). 558 에피소드 = 원래 158 OMX 에피소드 + SO-101 megamix 400 에피소드를 변환한 것.
+  </aside>
+</section>
+
+<!-- ============================================================
+     SLIDE 4 — NVIDIA 로봇 AI 생태계
+     ============================================================ -->
+<section>
+  <span class="slide-label">NVIDIA 생태계</span>
+  <h2>NVIDIA 로봇 AI 생태계</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>모델</th>
+        <th>역할</th>
+        <th>한 줄 요약</th>
+        <th>역할 태그</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>GR00T N1.6</strong></td>
+        <td>VLA (Vision-Language-Action)</td>
+        <td>카메라+언어 입력 &rarr; 실시간 로봇 행동 생성</td>
+        <td><span class="role-tag role-brain">두뇌</span></td>
+      </tr>
+      <tr>
+        <td><strong>Cosmos Predict2.5</strong></td>
+        <td>World Model</td>
+        <td>행동 조건부 미래 비디오 예측 &rarr; 합성 데이터</td>
+        <td><span class="role-tag role-world">상상력</span></td>
+      </tr>
+      <tr>
+        <td><strong>GR00T IDM</strong></td>
+        <td>Inverse Dynamics Model</td>
+        <td>비디오 2-프레임 &rarr; 행동 역추정 (pseudo label)</td>
+        <td><span class="role-tag role-obs">관찰자</span></td>
+      </tr>
+      <tr>
+        <td><strong>Cosmos Policy</strong></td>
+        <td>Video-to-Policy</td>
+        <td>비디오 모델 &rarr; 로봇 정책 직접 변환 (LIBERO 98.5%)</td>
+        <td><span class="role-tag role-ref">참조</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="card card-dim" style="margin-top:0.65em;">
+    <h4>본 프로젝트 역할 구성</h4>
+    <p>
+      ACT <span class="role-tag role-base">베이스라인</span>
+      + GR00T N1.6 <span class="role-tag role-brain">두뇌</span>
+      + Cosmos Predict <span class="role-tag role-world">상상력</span>
+      + IDM <span class="role-tag role-obs">관찰자</span>
+      = <strong>Option C+ 하이브리드</strong>
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 5 — Option C+ 전략
+     ============================================================ -->
+<section>
+  <span class="slide-label">전략</span>
+  <h2>Option C+ 하이브리드 전략</h2>
+
+  <div class="card card-ok" style="margin-bottom:0.55em;">
+    <h4>왜 Option C+인가</h4>
+    <p>단일 모델 의존 탈피. <strong>ACT baseline</strong> + GR00T N1.6 파인튜닝 + Cosmos 합성 데이터 증강을 조합하여 각 모델의 장점을 취한다.</p>
+  </div>
+
+  <div class="timeline">
+    <div class="tl-phase tl-phase-ok">
+      <span class="tl-week">W1–3</span>
+      <span class="tl-title">환경 구축 + ACT baseline</span>
+      <span class="tl-desc">OMX FK 변환 + LeRobot 환경 + ACT 베이스라인 학습</span>
+    </div>
+    <div class="tl-phase tl-phase-ok">
+      <span class="tl-week">W4–6</span>
+      <span class="tl-title">IDM v3 + Cosmos 실증</span>
+      <span class="tl-desc">pseudo-label 생성 + Cosmos Predict OOD 확인</span>
+    </div>
+    <div class="tl-phase tl-phase-warn">
+      <span class="tl-week tl-week-warn">W7–9</span>
+      <span class="tl-title">VLA 파인튜닝</span>
+      <span class="tl-desc">GR00T N1.6 + 증강 데이터 혼합 재학습</span>
+    </div>
+    <div class="tl-phase tl-phase-dim">
+      <span class="tl-week tl-week-dim">W10–12</span>
+      <span class="tl-title">배포 + 벤치마크</span>
+      <span class="tl-desc">ACT 대비 성능 비교 + 실 로봇 배포</span>
+    </div>
+  </div>
+
+  <div class="card card-dim" style="margin-top:0.45em;">
+    <h4>Option C+ 통합 아키텍처</h4>
+    <div class="flow">
+      <div class="flow-step">
+        <div class="flow-dot flow-dot-ok"></div>
+        <span class="flow-line"><strong>[언어 명령]</strong> &rarr; GR00T N1.6 (언어 이해 + 실시간 제어)</span>
+      </div>
+      <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+      <div class="flow-step">
+        <div class="flow-dot flow-dot-ok"></div>
+        <span class="flow-line"><strong>[FK 변환]</strong> &rarr; omx_fk.py (joint &rarr; EE pose)</span>
+      </div>
+      <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+      <div class="flow-step">
+        <div class="flow-dot flow-dot-warn"></div>
+        <span class="flow-line"><strong>[합성 비디오]</strong> &rarr; Cosmos Predict2.5 (후훈련 필요)</span>
+      </div>
+      <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+      <div class="flow-step">
+        <div class="flow-dot flow-dot-ok"></div>
+        <span class="flow-line"><strong>[pseudo label]</strong> &rarr; GR00T IDM &rarr; <strong>[재학습]</strong> &rarr; GR00T N1.6</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 6 — GR00T N1.6
+     ============================================================ -->
+<section>
+  <span class="slide-label">모델 분석</span>
+  <h2>GR00T N1.6 VLA</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-ok">
+        <h4>아키텍처</h4>
+        <p><strong>Base VLM</strong>: NVIDIA Cosmos-2B VLM 변형 (유연 해상도, 패딩 없음)</p>
+        <p><strong>DiT</strong>: 32-layer Diffusion Transformer (N1.5의 16층 대비 <span class="num">2x</span>)</p>
+        <p><strong>어댑터 제거</strong>: N1.5의 4-layer 트랜스포머 어댑터 대신 VLM 상위 4층 언프리즈</p>
+        <p><strong>이중 시스템</strong>: 고수준 추론 &amp; 저수준 제어 분리</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>학습 스펙</h4>
+        <p>전역 배치 크기: <span class="num">16,384</span></p>
+        <p>사전훈련: <span class="num">300K</span> steps</p>
+        <p>작업별 후훈련: <span class="num">10K~30K</span> steps</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-dim">
+        <h4>N1.5 대비 주요 개선</h4>
+        <p>더 큰 DiT (32층 vs 16층)</p>
+        <p>VLM 통합 방식 개선 &rarr; 멀티모달 융합 향상</p>
+        <p><strong>상대적 행동 예측</strong>으로 전환: 절대 관절 각도 &rarr; 상대적 행동 청크</p>
+        <p>&rarr; 더 부드럽고 빠른 수렴</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>지원 플랫폼 (N1.6 공식)</h4>
+        <p>Bimanual YAM &middot; Agibot Genie-1 &middot; Unitree G1</p>
+        <p class="xsmall" style="margin-top:0.22em;">* OMX는 파인튜닝 대상 (공식 지원 외 플랫폼)</p>
+      </div>
+
+      <div class="card card-ok">
+        <h4>본 프로젝트 GPU 요구</h4>
+        <p>파인튜닝 + 추론: <span class="num">1x RTX 4090</span> (RTX 5090 사용)</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 7 — 모델 비교 테이블
+     ============================================================ -->
+<section>
+  <span class="slide-label">모델 비교</span>
+  <h2>모델 핵심 차이점 비교</h2>
+
+  <table style="font-size:0.45em;">
+    <thead>
+      <tr>
+        <th>비교 항목</th>
+        <th>ACT</th>
+        <th>GR00T N1.6</th>
+        <th>Cosmos Predict2.5</th>
+        <th>GR00T IDM</th>
+        <th>Cosmos Policy</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>모델 타입</strong></td>
+        <td>IL Policy</td>
+        <td>VLA</td>
+        <td>World Model</td>
+        <td>IDM</td>
+        <td>Video-to-Policy</td>
+      </tr>
+      <tr>
+        <td><strong>주요 목적</strong></td>
+        <td>베이스라인</td>
+        <td>직접 행동 생성</td>
+        <td>합성 비디오 생성</td>
+        <td>pseudo label</td>
+        <td>비디오&rarr;정책 변환</td>
+      </tr>
+      <tr>
+        <td><strong>입력</strong></td>
+        <td>카메라+상태</td>
+        <td>카메라+언어+상태</td>
+        <td>초기 프레임+행동(EE)</td>
+        <td>비디오 2프레임 쌍</td>
+        <td>시각 관찰+시연</td>
+      </tr>
+      <tr>
+        <td><strong>출력</strong></td>
+        <td>행동 (6-dim)</td>
+        <td>행동 청크</td>
+        <td>합성 비디오</td>
+        <td>행동 pseudo label</td>
+        <td>행동+미래+가치</td>
+      </tr>
+      <tr>
+        <td><strong>GPU 요구</strong></td>
+        <td class="cell-ok">CPU 가능</td>
+        <td class="cell-ok">1x RTX 4090</td>
+        <td class="cell-ok">1x RTX 4090</td>
+        <td class="cell-ok">1x RTX 4090</td>
+        <td class="cell-fail">8x H100 (훈련)</td>
+      </tr>
+      <tr>
+        <td><strong>언어 이해</strong></td>
+        <td>불가</td>
+        <td class="cell-ok">지원</td>
+        <td>불가</td>
+        <td>불가</td>
+        <td>제한적</td>
+      </tr>
+      <tr>
+        <td><strong>본 프로젝트</strong></td>
+        <td>학습+배포</td>
+        <td>파인튜닝+배포</td>
+        <td>후훈련+추론</td>
+        <td>추론</td>
+        <td>추론 전용 (참조)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="card card-ok" style="margin-top:0.55em;">
+    <p>Cosmos Policy LIBERO 벤치마크: <span class="num">98.5%</span> 평균 성공률 (50개 시연으로 SOTA 달성)</p>
+    <p class="xsmall" style="margin-top:0.15em;">Spatial: 98.1% &middot; Object: 100.0% &middot; Goal: 98.2% &middot; Long: 97.6%</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 8 — IDM v1→v3
+     ============================================================ -->
+<section>
+  <span class="slide-label">사전 조사: IDM 검증</span>
+  <h2>사전 검증: IDM v1 &rarr; v3 성능 확인</h2>
+
+  <div class="stat-row">
+    <div class="stat-box">
+      <span class="stat-val" style="color:#78909C;">0.381</span>
+      <span class="stat-label">v1 Train Loss (10K steps)<br>SO-100 baseline (MAE 미측정)</span>
+    </div>
+    <div class="stat-box">
+      <span class="stat-val" style="color:#E65100;">0.5582</span>
+      <span class="stat-label">v2 Norm MAE (20K steps)<br>OMX data 158 ep</span>
+    </div>
+    <div class="stat-box" style="border-left: 3px solid #2E7D32;">
+      <span class="stat-val" style="color:#2E7D32;">0.3551</span>
+      <span class="stat-label">v3 Norm MAE (50K steps)<br>558 ep / 257K frames</span>
+    </div>
+  </div>
+
+  <div style="margin-bottom:0.42em;">
+    <div class="progress-label"><span>v2 (0.5582)</span><span>v3 (0.3551)</span></div>
+    <div class="progress-track">
+      <div class="progress-fill" style="width:63.6%; background: linear-gradient(90deg, #E65100, #2E7D32);"></div>
+    </div>
+    <p class="xsmall" style="text-align:right; margin-top:0.15em;">v2 대비 <strong style="color:#2E7D32;">-36.4%</strong> &nbsp;&nbsp; baseline 대비 <strong style="color:#2E7D32;">-41.7%</strong></p>
+  </div>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-ok">
+        <h4>v3 핵심 개선 사항</h4>
+        <p>데이터 확장: SO-101 megamix 400ep FK&rarr;IK 변환 + merge &rarr; <strong>558 ep, 257K frames</strong></p>
+        <p>Forward loss: <span class="num">0.2517</span> &nbsp;&middot;&nbsp; Train loss avg: <span class="num">0.2644</span></p>
+        <p>HuggingFace: <code>Yuseok/IDM-OMX-v3-50K</code></p>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card card-dim">
+        <h4>다음 단계</h4>
+        <p>IDM v3를 프로젝트의 pseudo-label 생성 도구로 채택</p>
+        <p><code>idm_extract_actions.py --embodiment-tag omx</code></p>
+        <p class="xsmall">주의: v3는 슬롯 <code>omx</code>(30) 사용. <code>new_embodiment</code>(31)과 혼용 불가.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 9 — IDM 기술 상세
+     ============================================================ -->
+<section>
+  <span class="slide-label">사전 조사: IDM 기술 상세</span>
+  <h2>IDM 아키텍처 및 기술 상세</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-dim">
+        <h4>아키텍처 (612M params)</h4>
+        <p>SiGLIP2 (768d) &rarr; VL transformer (4L) &rarr; DiT (8L, 1024d)</p>
+        <p style="margin-top:0.25em;">입력: 비디오 2-프레임 쌍 (t, t+1), uint8 256&times;256</p>
+        <p>출력: delta actions (rad), 6 dims</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>OMX Action Space</h4>
+        <p>델타 행동 (rad), &plusmn;3&deg;, 6차원</p>
+        <p>q99 정규화: <code>norm = 2*(x-q01)/(q99-q01) - 1</code></p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-warn">
+        <h4>주요 코드 수정 사항</h4>
+        <p><strong>denormalize NaN 방지</strong>: q99==q01 시 division by zero 방지</p>
+        <p><strong>AV1 &rarr; H.264 재인코딩</strong>: decord 호환성 문제 해결</p>
+        <p><strong>embodiment tag 검증</strong>: 잘못된 tag 입력 시 조기 에러 + 유효값 안내</p>
+        <p><strong>CLI 추가</strong>: <code>--embodiment-tag</code> 파라미터 명시적 지정</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>IDM &harr; VLA 관계</h4>
+        <p>가중치 전이 없음 (NO weight transfer)</p>
+        <p>IDM 출력 &rarr; denormalize &rarr; Parquet action &rarr; VLA 학습 데이터</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 10 — Cosmos Predict: 실험 매트릭스
+     ============================================================ -->
+<section>
+  <span class="slide-label">사전 조사: Cosmos Predict</span>
+  <h2>Cosmos Predict 2.5: 사전 타당성 검토</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>실험</th>
+        <th>설정</th>
+        <th>VRAM</th>
+        <th>결과</th>
+        <th>상태</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Base V2W</strong></td>
+        <td>432&times;768, 93fr, guidance=7</td>
+        <td>~20 GB</td>
+        <td>품질 낮음. post-training 없는 범용 모델 한계</td>
+        <td><span class="badge badge-warn">WARNING</span></td>
+      </tr>
+      <tr>
+        <td><strong>Action-Cond (Bridge)</strong></td>
+        <td>256&times;320, 37~49fr</td>
+        <td>~20 GB</td>
+        <td>정상 동작. 학습 도메인 일치</td>
+        <td><span class="badge badge-ok">OK</span></td>
+      </tr>
+      <tr>
+        <td><strong>Action-Cond (OMX)</strong></td>
+        <td>FK 변환, scaler=30.6</td>
+        <td>~20 GB</td>
+        <td>노이즈 심함. 전혀 다른 영상 생성 (OOD)</td>
+        <td><span class="badge badge-fail">FAIL</span></td>
+      </tr>
+      <tr>
+        <td><strong>Action-Cond v2</strong></td>
+        <td>guidance=3, steps=50</td>
+        <td>~20 GB</td>
+        <td>여전히 실패. 파라미터 튜닝으로 OOD 해결 불가</td>
+        <td><span class="badge badge-fail">FAIL</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <aside class="notes">
+    이 실험들은 프로젝트 착수 전 사전 타당성 검토 차원에서 수행했다. 각 실험의 동기: Bridge 샘플 테스트는 "모델 자체가 제대로 작동하는지" 확인하기 위한 기준선. Base V2W는 합성 데이터 생성 시나리오 확인. OMX 변환 시도는 실제 목표 시나리오. action_scaler 재보정은 FK 변환 후 Cosmos 내부 정규화 범위 문제. OOD 실패는 모델이 OMX 로봇의 외형을 한 번도 본 적이 없기 때문이며, 파라미터 조정으로는 해결 불가. 이것이 post-training이 필수인 이유다.
+  </aside>
+</section>
+
+<!-- ============================================================
+     SLIDE 11 — Cosmos Predict: 이론 vs 실제
+     ============================================================ -->
+<section>
+  <span class="slide-label">사전 조사: 제약 사항 파악</span>
+  <h2>Cosmos Predict: 사전 조사에서 파악한 제약</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-ok">
+        <h4>이론 (설계 시 기대)</h4>
+        <div class="flow">
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line">Cosmos 합성 데이터 생성</span>
+          </div>
+          <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line">IDM pseudo label 추출</span>
+          </div>
+          <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line">VLA 학습 데이터 증강</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card card-fail">
+        <h4>사전 검증 결과</h4>
+        <p><strong>Post-training 없이는 새 로봇 도메인에서 사용 불가</strong></p>
+        <p style="margin-top:0.22em;">Post-training에 실제 OMX 영상이 필요 &rarr; 순환 의존 발생</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-fail">
+        <h4>순환 의존 (Circular Dependency)</h4>
+        <div class="circ-dep">
+          <div class="circ-node circ-node-fail">
+            Cosmos Post-training<br>
+            <strong>실제 OMX 영상 필요</strong> (50~100 ep)
+          </div>
+          <div class="circ-arrow">&#8645; 의존</div>
+          <div class="circ-node circ-node-fail">
+            OMX 영상을 늘리려고<br>
+            <strong>Cosmos를 쓰려는 것</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="card card-warn">
+        <h4>현재 데이터 현황</h4>
+        <p>보유: <strong>SO-100 영상</strong> &mdash; SO-100 로봇이 찍힌 것</p>
+        <p style="color:#E65100;"><strong>실제 OMX 로봇 데이터: 0 에피소드</strong></p>
+        <p class="xsmall">Bridge 원본 ~30,000 ep (추정) 대비, post-training 최소 50~100 ep 필요</p>
+      </div>
+    </div>
+  </div>
+
+  <aside class="notes">
+    순환 의존의 핵심: Cosmos 세계 모델이 OMX 로봇의 외형과 동작을 학습하려면 실제 OMX 영상이 필요하다. 그런데 우리가 OMX 영상을 늘리기 위해 Cosmos를 쓰려는 것이다. 이 모순은 근본적이다. SO-100 영상을 FK 변환해서 OMX 관절값으로 바꿔도, Cosmos는 "SO-100 로봇이 찍힌 영상"을 보고 "OMX 로봇"을 생성하라는 요청을 받는다. 그 로봇을 한 번도 본 적이 없으니 노이즈만 생성하는 것이다. Bridge dataset은 30,000 에피소드로 훈련됐다. 최소 50-100이 필요하다고 해도 우리는 현재 0 에피소드(실제 OMX 기준)이다.
+  </aside>
+</section>
+
+<!-- ============================================================
+     SLIDE 12 — Cosmos Transfer 2.5: 시각 증강 도구
+     ============================================================ -->
+<section>
+  <span class="slide-label">Cosmos Transfer 2.5</span>
+  <h2>Cosmos Transfer 2.5: 시각 증강 도구</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-ok">
+        <h4>핵심 개념</h4>
+        <p>원본 비디오의 <strong>구조(모션, 레이아웃)는 보존</strong>하면서 외관(조명, 재질, 배경)만 변환하는 ControlNet 기반 video-to-video 모델</p>
+        <p style="margin-top:0.2em;">action/state는 원본 그대로 유지 &rarr; 정합성 문제 없음</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>제어 입력 (Control)</h4>
+        <p><strong>Edge</strong>: 윤곽선 보존</p>
+        <p><strong>Depth</strong>: 전후 관계 보존</p>
+        <p><strong>Seg</strong>: 객체별 영역 보존</p>
+        <p><strong>Blur (Vis)</strong>: 시각 참조</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-warn">
+        <h4>기대 효과</h4>
+        <p>조명 변화에 대한 정책 강건성 향상</p>
+        <p>배경/테이블 재질 변화에 대한 일반화</p>
+        <p>카메라 톤/노출 변화에 대한 내성</p>
+        <p style="margin-top:0.2em;">X-Mobility 사례: Transfer1로 성공률 54% &rarr; 91%</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>운영 전략</h4>
+        <p>clip 단위 2~6초 분할 증강</p>
+        <p>원본:증강 비율 = 1:0.25 &rarr; 최대 1:0.5</p>
+        <p>seg IoU 기반 자동 검수 후 통과본만 사용</p>
+        <p>공식 요구 VRAM: <span class="num">65.4 GB</span> (48GB+ GPU 필요)</p>
+      </div>
+    </div>
+  </div>
+
+  <aside class="notes">
+    Cosmos Transfer는 Predict와 달리 "새 비디오를 생성"하는 게 아니라 "기존 비디오의 외관만 변환"한다. 따라서 post-training 없이도 범용 모델로 사용 가능하다. X-Mobility 논문에서 Transfer1을 사용하여 visual augmentation으로 성공률을 54%에서 91%로 올린 사례가 있다. 운영 시 주의: 커뮤니티 보고에 따르면 조명만 바꿔도 geometry drift 발생 가능, seg mask를 반드시 함께 사용해야 구조 보존이 안정적이다. 공식 요구 VRAM 65.4GB이므로 A6000(48GB) 이상 GPU가 필요하다.
+  </aside>
+</section>
+
+<!-- ============================================================
+     SLIDE 13 — SAM3: 동작하는 대안
+     ============================================================ -->
+<section>
+  <span class="slide-label">사전 조사: SAM3 검증</span>
+  <h2>SAM3: 프로젝트에서 활용할 세그멘테이션 도구</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-ok">
+        <h4>사전 검증 결과</h4>
+        <p>SO-100 sorting.mp4 첫 프레임 (640&times;480), confidence_threshold: 0.3</p>
+        <table style="margin-top:0.4em; font-size:0.75em;">
+          <thead>
+            <tr><th>프롬프트</th><th>감지 수</th><th>결과</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>"robot arm"</td>
+              <td class="cell-ok">1</td>
+              <td>로봇 팔 전체 정확히 감지</td>
+            </tr>
+            <tr>
+              <td>"object on table"</td>
+              <td class="cell-ok">4</td>
+              <td>테이블 위 물체 4개 개별 감지</td>
+            </tr>
+            <tr>
+              <td>"table"</td>
+              <td class="cell-ok">1</td>
+              <td>테이블 영역 전체 감지</td>
+            </tr>
+            <tr>
+              <td>"gripper"</td>
+              <td class="cell-warn">0</td>
+              <td>임계값 미달</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-ok">
+        <h4>VRAM</h4>
+        <p>모델 로드: <span class="num">3.22 GB</span></p>
+        <p>Peak (추론 포함): <span class="num">3.82 GB</span></p>
+        <p style="margin-top:0.22em; color:#2E7D32;">Cosmos Transfer (65.4 GB) 대비 <strong>약 17분의 1</strong> VRAM</p>
+      </div>
+
+      <div class="card card-warn">
+        <h4>활용: SAM3 + torchvision 증강</h4>
+        <div class="flow">
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line">SO-100 비디오 &rarr; SAM3 마스크 추출</span>
+          </div>
+          <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-warn"></div>
+            <span class="flow-line">배경만: ColorJitter, GaussianBlur</span>
+          </div>
+          <div class="flow-step"><div class="flow-connector"><div class="flow-connector-inner"></div></div></div>
+          <div class="flow-step">
+            <div class="flow-dot flow-dot-ok"></div>
+            <span class="flow-line">로봇 마스크 영역: 유지 (보호)</span>
+          </div>
+        </div>
+        <p class="xsmall" style="margin-top:0.22em;">한계: 스타일 변환이 아닌 색상/블러 수준. 도메인 전환(sim-to-real) 불가.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 14 — VRAM 비교 막대 그래프
+     ============================================================ -->
+<section>
+  <span class="slide-label">VRAM 한눈에 보기</span>
+  <h2>VRAM 비교: 무엇이 가능하고 무엇이 불가한가</h2>
+
+  <div class="vram-chart" style="padding: 1.2em 0 0.3em; position:relative;">
+
+    <div class="vram-row">
+      <span class="vram-label">SAM3</span>
+      <div class="vram-track">
+        <div class="vram-limit" style="left:45.7%;">
+          <span class="vram-limit-label">RTX 5090 (32 GB)</span>
+        </div>
+        <div class="vram-fill" style="width:5.5%; background: linear-gradient(90deg, #A5D6A7, #66BB6A);">
+          <span class="vram-val">3.82 GB</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="vram-row">
+      <span class="vram-label">Cosmos Predict 2B</span>
+      <div class="vram-track">
+        <div class="vram-limit" style="left:45.7%;"></div>
+        <div class="vram-fill" style="width:28.6%; background: linear-gradient(90deg, #FFE082, #FFA726);">
+          <span class="vram-val" style="color:#424242;">~20 GB</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="vram-row">
+      <span class="vram-label">Transfer 2B (실측)</span>
+      <div class="vram-track">
+        <div class="vram-limit" style="left:45.7%;"></div>
+        <div class="vram-fill" style="width:44%; background: linear-gradient(90deg, #EF9A9A, #EF5350);">
+          <span class="vram-val">65.4 GB (48GB+ GPU 필요)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="vram-row">
+      <span class="vram-label">Transfer 2B (공식)</span>
+      <div class="vram-track">
+        <div class="vram-limit" style="left:45.7%;"></div>
+        <div class="vram-fill" style="width:93.4%; background:rgba(230,81,0,0.12); border:1px dashed rgba(230,81,0,0.5);">
+          <span class="vram-val" style="color:#E65100;">65.4 GB (공식 요구)</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="cols" style="margin-top:0.4em;">
+    <div class="col">
+      <div class="card card-ok">
+        <p><span class="badge badge-ok">32GB 내 사용 가능</span> &nbsp; SAM3 (3.82 GB) &nbsp;&middot;&nbsp; Cosmos Predict (20 GB)</p>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card card-fail">
+        <p><span class="badge badge-warn">48GB+ GPU 필요</span> &nbsp; Cosmos Transfer (공식 65.4 GB, A6000/L40S 이상)</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="xsmall" style="margin-top:0.35em;">수직 점선 = RTX 5090 한계 (32 GB). Predict는 텍스트 인코더 언로드로 32GB 내 동작.</p>
+</section>
+
+<!-- ============================================================
+     SLIDE 15 — 데이터 파이프라인 흐름도
+     ============================================================ -->
+<section>
+  <span class="slide-label">데이터 파이프라인</span>
+  <h2>전체 데이터 파이프라인 흐름도</h2>
+
+  <div class="timeline" style="margin-bottom:0.55em;">
+    <div class="tl-phase tl-phase-ok">
+      <span class="tl-week">Phase 0</span>
+      <span class="tl-title">선행 검증</span>
+      <span class="tl-desc">
+        <span style="color:#2E7D32;">&#9679;</span> omx_fk.py FK 변환 완료<br>
+        <span style="color:#2E7D32;">&#9679;</span> action_scaler 30.6 재보정<br>
+        <span style="color:#C62828;">&#9679;</span> Cosmos&rarr;IDM 정확도 미검증
+      </span>
+    </div>
+    <div class="tl-phase tl-phase-warn">
+      <span class="tl-week tl-week-warn">Phase 1</span>
+      <span class="tl-title">기본 학습</span>
+      <span class="tl-desc">
+        <span style="color:#C62828;">&#9679;</span> OMX 시연 수집 <strong style="color:#C62828;">차단</strong><br>
+        <span style="color:#CFD8DC;">&#9679;</span> GR00T VLA 파인튜닝 대기<br>
+        <span style="color:#CFD8DC;">&#9679;</span> Cosmos 후훈련 대기
+      </span>
+    </div>
+    <div class="tl-phase tl-phase-warn">
+      <span class="tl-week tl-week-warn">Phase 2A</span>
+      <span class="tl-title">합성 데이터 증강</span>
+      <span class="tl-desc">
+        <span style="color:#C62828;">&#9679;</span> Cosmos V2W 추론 <strong style="color:#C62828;">차단</strong><br>
+        <span style="color:#CFD8DC;">&#9679;</span> IDM pseudo label 대기
+      </span>
+    </div>
+    <div class="tl-phase tl-phase-ok">
+      <span class="tl-week">Phase 2B</span>
+      <span class="tl-title">대안 파이프라인</span>
+      <span class="tl-desc">
+        <span style="color:#2E7D32;">&#9679;</span> SAM3 마스크 검증됨<br>
+        <span style="color:#E65100;">&#9679;</span> torchvision 증강 미구현<br>
+        <span style="color:#2E7D32;">&#9679;</span> IDM v3 pseudo-label 도구 채택
+      </span>
+    </div>
+  </div>
+
+  <div class="card card-dim">
+    <h4>Phase 3: 혼합 재학습 (대기)</h4>
+    <p>실제 + 증강 데이터 &rarr; GR00T N1.6 VLA 파인튜닝 &nbsp;&middot;&nbsp; 비율: 실제 1 : 증강 0.25 &rarr; 0.5 &nbsp;&middot;&nbsp; ACT baseline 대비 성능 비교</p>
+  </div>
+
+  <div style="margin-top:0.4em; display:flex; gap:0.8em; font-size:0.42em; color:#78909C;">
+    <span><span class="flow-dot flow-dot-ok" style="display:inline-block; vertical-align:middle;"></span> 검증됨</span>
+    <span><span class="flow-dot flow-dot-fail" style="display:inline-block; vertical-align:middle;"></span> 차단됨 (OMX 실 데이터 필요)</span>
+    <span><span class="flow-dot flow-dot-warn" style="display:inline-block; vertical-align:middle;"></span> 부분 / 미구현</span>
+    <span><span class="flow-dot flow-dot-dim" style="display:inline-block; vertical-align:middle;"></span> 대기</span>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 16 — 핵심 교훈
+     ============================================================ -->
+<section>
+  <span class="slide-label">핵심 고려사항</span>
+  <h2>사전 조사에서 파악한 핵심 고려사항</h2>
+
+  <div class="lesson-item">
+    <span class="lesson-num">01</span>
+    <span class="lesson-text"><strong>Post-training은 필수</strong> &mdash; 범용 세계 모델은 새 로봇 도메인에서 즉시 사용 불가. OOD 문제는 파라미터 튜닝으로 해결 불가능하다.</span>
+  </div>
+  <div class="lesson-item">
+    <span class="lesson-num">02</span>
+    <span class="lesson-text"><strong>순환 의존 함정</strong> &mdash; 데이터를 늘리려면 데이터가 필요. SO-100 영상 &ne; OMX 영상. 실제 로봇 시연 수집이 모든 것의 선행 조건이다.</span>
+  </div>
+  <div class="lesson-item">
+    <span class="lesson-num">03</span>
+    <span class="lesson-text"><strong>VRAM이 경계를 결정</strong> &mdash; 32GB로 할 수 있는 것(SAM3, Predict)과 없는 것(Transfer 65.4GB)이 명확하다. 아키텍처 선택은 하드웨어에 종속된다.</span>
+  </div>
+  <div class="lesson-item">
+    <span class="lesson-num">04</span>
+    <span class="lesson-text"><strong>경량 대안의 실질적 가치</strong> &mdash; SAM3 (3.82 GB)로 세그멘테이션 라벨링을 자동화하고, Cosmos Transfer (48GB+ GPU)와 조합하면 시각 증강 파이프라인이 완성된다.</span>
+  </div>
+  <div class="lesson-item">
+    <span class="lesson-num">05</span>
+    <span class="lesson-text"><strong>IDM 품질은 꾸준히 개선 가능</strong> &mdash; 데이터 확장(158 &rarr; 558 ep)과 장기 학습(10K &rarr; 50K steps)으로 normalized MAE baseline 대비 <strong>-41.7%</strong> 달성.</span>
+  </div>
+  <div class="lesson-item">
+    <span class="lesson-num">06</span>
+    <span class="lesson-text"><strong>이론과 실제의 차이</strong> &mdash; 파이프라인 설계 단계에서는 보이지 않는 제약이 실제 실행 시 드러난다. 직접 돌려봐야 안다.</span>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 17 — 다음 단계 (simplified)
+     ============================================================ -->
+<section>
+  <span class="slide-label">실행 계획</span>
+  <h2>프로젝트 실행 계획</h2>
+
+  <div class="next-simple-list">
+    <div class="next-simple-item now">
+      <span class="next-tag now">즉시</span>
+      <strong>IDM v3 pseudo-label 생성</strong> &mdash; <code>idm_extract_actions.py --embodiment-tag omx</code>로 558 에피소드 전체에 적용
+    </div>
+    <div class="next-simple-item short">
+      <span class="next-tag short">단기</span>
+      <strong>SAM3 + torchvision 증강 파이프라인</strong> &mdash; 배경 ColorJitter / GaussianBlur, 로봇 마스크 보호. OMX 실 데이터 없이 진행 가능
+    </div>
+    <div class="next-simple-item mid">
+      <span class="next-tag mid">중기</span>
+      <strong>실제 OMX 데이터 수집 &rarr; Cosmos post-training</strong> &mdash; 최소 50+ 에피소드 확보 후 Cosmos Base V2W 후훈련 (256&times;320, VRAM 최적화)
+    </div>
+    <div class="next-simple-item long">
+      <span class="next-tag long">장기</span>
+      <strong>48GB+ GPU &rarr; Cosmos Transfer 재시도</strong> &mdash; RTX A6000 / L40S (48GB) 이상 확보 시 edge + seg 제어, SO-100 외형 보존 테스트
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SLIDE 18 — 참고 자료 & Q&A
+     ============================================================ -->
+<section>
+  <span class="slide-label">참고 자료</span>
+  <h2>참고 자료 &amp; Q&A</h2>
+
+  <div class="cols">
+    <div class="col">
+      <div class="card card-ok">
+        <h4>이 프로젝트</h4>
+        <p><strong>HuggingFace</strong>: <code>Yuseok/IDM-OMX-v3-50K</code></p>
+        <p><strong>IDM</strong>: <code>github.com/isaac-sim/GR00T-Dreams-IDM</code></p>
+        <p><strong>문서</strong>: Project.md &middot; PIPELINE.md &middot; CURRICULUM.md</p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>NVIDIA 공식</h4>
+        <p><code>github.com/isaac-sim/IsaacGR00T</code> (GR00T N1.6)</p>
+        <p><code>github.com/nvidia-cosmos/cosmos-predict2.5</code></p>
+        <p><code>github.com/nvidia-cosmos/cosmos-transfer2.5</code></p>
+        <p><code>nvidia-cosmos.github.io/cosmos-cookbook</code></p>
+      </div>
+
+      <div class="card card-dim">
+        <h4>대안 도구</h4>
+        <p><strong>SAM3</strong>: <code>github.com/facebookresearch/sam3</code></p>
+        <p><strong>LeRobot</strong>: <code>github.com/huggingface/lerobot</code></p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card card-dim">
+        <h4>핵심 수치 요약</h4>
+        <table style="font-size:0.58em;">
+          <thead>
+            <tr><th>항목</th><th>수치</th><th>비고</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>IDM v3 Normalized MAE</td><td class="cell-ok">0.3551</td><td class="cell-ok">baseline 대비 -41.7%</td></tr>
+            <tr><td>Cosmos Predict VRAM</td><td class="cell-ok">~20 GB</td><td>32GB 내 동작</td></tr>
+            <tr><td>Cosmos Transfer VRAM</td><td class="cell-warn">65.4 GB</td><td>48GB+ GPU 필요</td></tr>
+            <tr><td>SAM3 Peak VRAM</td><td class="cell-ok">3.82 GB</td><td>8분의 1 수준</td></tr>
+            <tr><td>Cosmos Policy LIBERO</td><td class="cell-ok">98.5%</td><td>50 episodes SOTA</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:1.1em; text-align:center;">
+        <p style="font-size:0.68em; color:#90A4AE; letter-spacing:0.12em;">Q &amp; A</p>
+        <div class="title-accent-bar" style="margin: 0.45em auto;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div><!-- .slides -->
+</div><!-- .reveal -->
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    progress: true,
+    controls: true,
+    center: false,
+    transition: 'slide',
+    transitionSpeed: 'default',
+    backgroundTransition: 'zoom',
+    autoAnimateDuration: 0.45,
+    autoAnimateEasing: 'ease-out',
+    width: 1280,
+    height: 720,
+    margin: 0.04,
+    minScale: 0.2,
+    maxScale: 2.0,
+    plugins: []
+  });
+</script>
+</body>
+</html>
