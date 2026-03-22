@@ -514,17 +514,73 @@ python ~/claude/pseudo-project/scripts/isaac_sim/omx_digital_twin.py
 # 5. 종료: Ctrl+C 또는 Isaac Sim 창 닫기
 ```
 
-## 10. 향후 확장
+## 10. 단계별 로드맵
+
+### 진행 순서
+
+```
+[A단계] 디지털 트윈 미러링        ✅ 설계 + 구현 완료, 실물 테스트 필요
+    │
+    ▼
+[A 검증] 실물 로봇 연결 테스트     ❌ 미수행
+    │
+    ▼
+[B단계] 합성 데이터 생성           ❌ 미착수
+    │
+    ▼
+[B 검증] 합성 데이터 학습 성능     ❌ 미착수
+    │
+    ▼
+[C단계] 양방향 Sim2Real           ❌ 미착수
+```
+
+### A단계 검증 (B단계 진입 전 필수)
+
+실물 로봇을 연결하여 다음을 확인해야 B단계로 진행 가능:
+
+- [ ] Isaac Sim에 OMX_F 모델이 정상 import되는가 (메시, 관절 구조)
+- [ ] `/joint_states` 토픽 수신 시 시뮬레이션 로봇이 실물과 동일하게 움직이는가
+- [ ] 관절 방향이 일치하는가 (특히 gripper_joint_1 반전 없는지)
+- [ ] 미러링 지연이 체감 가능 수준 이하인가 (목표: 100ms 이하)
 
 ### B단계: 합성 데이터 생성
+
+**전제 조건:**
+
+| 항목 | 설명 |
+|------|------|
+| A단계 실물 테스트 통과 | 미러링이 동작해야 카메라/물리 신뢰 가능 |
+| 가상 카메라 구현 | `UsdGeom.Camera` 생성, 실물 카메라와 동일 위치/앵글 설정 |
+| 도메인 랜덤화 설계 | Isaac Sim Replicator 활용 (조명, 배경, 텍스처 변경) |
+| LeRobot 저장 파이프라인 | 가상 카메라 렌더링 → parquet + mp4 (LeRobot v2.1 포맷) |
+| 품질 비교 기준 | 실물 데이터 vs 합성 데이터의 sim-real gap 측정 방법 정의 |
+
+**구현 범위:**
 - 가상 카메라 이미지를 LeRobot v2.1 데이터셋 포맷으로 저장
 - Isaac Sim Replicator를 활용한 도메인 랜덤화
-- `observation.images.camera1` 와 동일한 640x480/30fps 규격
+- `observation.images.camera1`와 동일한 640x480/30fps 규격
+- 실물 데이터셋 (`omx_f_test`)과 동일한 스키마:
+  - `observation.state`: [6] float32 (joint1~gripper_joint_1)
+  - `action`: [6] float32
+  - `observation.images.camera1`: 640x480x3 video
 
-### C단계: 양방향 연동
+### C단계: 양방향 연동 (Sim2Real)
+
+**전제 조건:**
+
+| 항목 | 설명 |
+|------|------|
+| B단계 완료 | 합성 데이터로 학습된 정책 모델이 있어야 함 |
+| 학습된 정책 체크포인트 | ACT/Diffusion 등으로 학습된 모델 파일 |
+| Isaac Sim → 실물 명령 경로 | `ROS2PublishJointState` → `/leader/joint_trajectory` 연결 |
+| Safety boundary 설계 | 관절 제한, 속도 제한, 충돌 감지 (실물 로봇 보호) |
+| Sim 내 정책 추론 루프 | Isaac Sim에서 정책 로드 → observation 수집 → action 생성 → 퍼블리시 |
+
+**구현 범위:**
 - `ROS2PublishJointState`로 시뮬레이션 → 실물 명령 전송
 - 학습된 정책을 Isaac Sim에서 실행, 검증 후 실물 배포
 - Safety boundary 설정 (관절 제한, 충돌 감지)
+- 시뮬레이션 성공률 → 실물 성공률 비교 (Sim2Real gap 측정)
 
 ## 11. 리뷰 반영 사항
 
