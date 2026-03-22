@@ -1,0 +1,40 @@
+# OMX Digital Twin Configuration
+# Isaac Sim 5.1.0 + open_manipulator (main v4.1.2+)
+
+# ROS 2 설정
+ros2:
+  domain_id: 30
+  joint_state_topic: "joint_states"
+  # 주의: PublishJointState 기본 토픽이 "joint_states"이므로,
+  # 아래 값을 변경하지 않으면 Subscribe와 Publish가 같은 토픽을 사용하여 피드백 루프 발생
+  isaac_joint_state_topic: "isaac_joint_states"
+
+# 로봇 설정
+robot:
+  name: "omx_f"
+
+# URDF Import 설정
+urdf_import:
+  # URDF 파일 경로 (환경변수 OPEN_MANIPULATOR_PATH 기반)
+  urdf_path: "${OPEN_MANIPULATOR_PATH}/open_manipulator_description/urdf/omx_f/omx_f.urdf"
+  # package:// 치환 매핑
+  package_paths:
+    open_manipulator_description: "${OPEN_MANIPULATOR_PATH}/open_manipulator_description"
+  # ImportConfig 속성
+  fix_base: true
+  merge_fixed_joints: false
+  parse_mimic: true
+  create_physics_scene: true
+  make_default_prim: true
+  import_inertia_tensor: true
+  default_drive_type: 1              # 0=none, 1=position, 2=velocity
+  default_drive_strength: 1000.0
+  default_position_drive_damping: 100.0
+
+# 물리 시뮬레이션 설정
+physics:
+  timestep: 0.01        # 10ms = 100Hz (joint_states와 동기화)
+
+# 렌더링 설정
+rendering:
+  fps: 30               # rendering_dt = 1/fps
